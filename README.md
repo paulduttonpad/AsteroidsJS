@@ -27,9 +27,9 @@ To get a local copy up and running follow these simple steps.
   cd multiplayer-asteroids
 
 3. Install NPM packages:
-  npm install socket.io
-
-4. Start the server:
+  npm install socket.io express matter-js node-p5
+   
+5. Start the server:
   node server.js
 
 ### Playing the Game
