@@ -310,7 +310,7 @@ function sketch(p) {
               if (asteroids.length==0){
                 nextLevel();
               }
-              worldVersion++;
+              sendData();
             }
             break;
           }
