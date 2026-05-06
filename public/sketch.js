@@ -611,7 +611,7 @@ function touchEnded(){
 
 function touchStarted(){
   if (touches.length>0){
-    if (touches[0].x>width-10 && touches[0].y<10) {
+    if (touches[0].x>width-30 && touches[0].y<30) {
       ship.shieldOn(100000);
     }
   }
