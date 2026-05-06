@@ -103,6 +103,16 @@ http://192.168.1.50:10000
 
 Make sure port `10000` is open and accessible if connecting from another device.
 
+## Contributing
+
+Contributions are what make the open-source community such an amazing place to learn, inspire, and create.
+
+Any contributions you make are greatly appreciated.
+
+## License
+
+Freeware
+
 ## Contact
 
 Paul Dutton - pauldutton@pad-digital.co.uk
