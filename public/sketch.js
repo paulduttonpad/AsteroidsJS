@@ -30,6 +30,9 @@ let start=false;
 let starField;
 let scl=1;
 let walls = [];
+const shipSendIntervalMs = 100; // send own movement to the server at max 10/sec when moving
+let lastShipSendAt = 0;
+let lastShipColourSendKey = '';
 
 const getDeviceType = () => {
   const ua = navigator.userAgent;
@@ -74,6 +77,7 @@ function resetGame(){
 
   socket = io.connect(window.location.href); 
   socket.on('alldata',updateAll);
+  socket.on('deltadata',updateDelta);
   socket.on('laserdata',laserAll);
   socket.on('move',moveAsteroids);
   socket.on('shipdata',updateShip);
@@ -107,19 +111,157 @@ function updateAll(data){
     }
   }
   ships=data.ships;
+  for (const remoteShip of ships) {
+    normaliseIncomingShipColour(remoteShip);
+    initialiseRemoteShipSmoothing(remoteShip);
+  }
   if (nextLevel){
     removeWalls();
     createWalls();
   }
 }
 
+function updateDelta(data){
+  if (!data) return;
+  if (data.gameParams) {
+    gameParams = data.gameParams;
+    removeWalls();
+    createWalls();
+  }
+
+  applyAsteroidDelta(data.asteroids);
+  applyLaserDelta(data.lasers);
+  applyShipDelta(data.ships);
+}
+
+function applyAsteroidDelta(delta){
+  if (!delta) return;
+
+  for (const id of delta.remove || []) {
+    removeAsteroidById(id);
+  }
+
+  for (const asteroid of delta.add || []) {
+    removeAsteroidById(asteroid.id);
+    asteroids.push(new Asteroid(asteroid));
+  }
+
+  for (const asteroid of delta.update || []) {
+    const local = findById(asteroids, asteroid.id);
+    if (!local) {
+      socket.compress(true).emit('needdata');
+      continue;
+    }
+    Asteroid.applyNetworkUpdate(local, asteroid);
+  }
+  asteroidCount = asteroids.length;
+}
+
+function applyLaserDelta(delta){
+  if (!delta) return;
+
+  for (const key of delta.remove || []) {
+    removeLaserByKey(key);
+  }
+
+  for (const laser of delta.add || []) {
+    removeLaserByKey(laser.key);
+    lasers.push(laser);
+  }
+
+  for (const laser of delta.update || []) {
+    const local = findLaser(laser.key);
+    if (!local) {
+      socket.compress(true).emit('needdata');
+      continue;
+    }
+    Object.assign(local, laser);
+  }
+}
+
+function applyShipDelta(delta){
+  if (!delta || !ship) return;
+
+  for (const id of delta.remove || []) {
+    removeShipById(id);
+  }
+
+  for (const s of delta.add || []) {
+    if (s.id == ship.id) {
+      updateOwnShipStatus(s);
+    } else if (!findById(ships, s.id)) {
+      normaliseIncomingShipColour(s);
+      initialiseRemoteShipSmoothing(s);
+      ships.push(s);
+    }
+  }
+
+  for (const s of delta.update || []) {
+    if (s.id == ship.id) {
+      updateOwnShipStatus(s);
+      continue;
+    }
+
+    const local = findById(ships, s.id);
+    if (!local) {
+      socket.compress(true).emit('needdata');
+      continue;
+    }
+    normaliseIncomingShipColour(s, local);
+    Object.assign(local, s);
+  }
+}
+
+function updateOwnShipStatus(s){
+  if (!ship) return;
+  if (s.score !== undefined) ship.score = s.score;
+  if (s.life !== undefined) ship.life = s.life;
+  if (s.shield !== undefined) ship.shield = s.shield;
+  if (s.explode !== undefined) ship.explode = s.explode;
+  if (s.explodePct !== undefined) ship.explodePct = s.explodePct;
+  if (isValidShipColour(s.colour)) ship.colour = safeColour(s.colour, ship.id);
+}
+
+function findById(list, id){
+  return list.find(item => item.id == id);
+}
+
+function findLaser(key){
+  return lasers.find(laser => laser.key == key);
+}
+
+function removeLaserByKey(key){
+  for (let i=lasers.length-1;i>=0;i--) {
+    if (lasers[i].key == key) {
+      lasers.splice(i,1);
+    }
+  }
+}
+
+function removeShipById(id){
+  for (let i=ships.length-1;i>=0;i--) {
+    if (ships[i].id == id) {
+      ships.splice(i,1);
+    }
+  }
+}
+
+function removeAsteroidById(id){
+  for (let i=asteroids.length-1;i>=0;i--) {
+    if (asteroids[i].id == id) {
+      Composite.remove(engine.world, [asteroids[i].body]);
+      asteroids.splice(i,1);
+    }
+  }
+}
+
 function updateLife(data){
-  for (s2 of data.ships) {
+  for (let s2 of data.ships) {
     if (s2.id==ship.id){
       ship.life=s2.life;
       ship.explode=s2.explode;
         } else {
-      for (s of ships){
+      for (let s of ships){
         if (s.id==s2.id){
           s.life=s2.life;
           s.shield=s2.shield;
@@ -134,41 +276,118 @@ function laserAll(data){
   lasers=data.lasers;
 }
 
+function sendShipUpdateIfMoved(){
+  if (!ship || !socket || !socket.connected) return;
+
+  const colour = safeColour(ship.colour, ship.id);
+  const colourSendKey = JSON.stringify({R:colour.R,G:colour.G,B:colour.B});
+  const mustSendColour = colourSendKey !== lastShipColourSendKey;
+
+  if (!ship.moved && !mustSendColour) return;
+
+  const now = millis();
+  if (!mustSendColour && now - lastShipSendAt < shipSendIntervalMs) return;
+
+  lastShipSendAt = now;
+  lastShipColourSendKey = colourSendKey;
+
+  const data = ship.getData();
+  if (mustSendColour) {
+    // Colour is part of the player's session identity, so do not send the
+    // initial/changed colour as volatile. If this first packet is dropped the
+    // server can keep its temporary white placeholder and broadcast that to
+    // reconnecting clients.
+    socket.compress(true).emit('ship', data);
+  } else {
+    socket.compress(true).volatile.emit('ship', data);
+  }
+}
+
 function updateShip(data){
-  found=false;
-  if (ship) {
+  if (!data || !ship) return;
+  let found=false;
   for (let i=ships.length-1;i>=0;i--) {
     let s=ships[i];
+    if (!s || s.id==ship.id){
+      ships.splice(i,1);
+      continue;
+    }
     if (s.id==data.id){
       found=true;
-      s.pos=data.pos;
-      s.vel=data.vel;
-      s.thrustOn=data.thrustOn;
-      s.heading=data.heading;
-      s.score=data.score;
-      s.life=data.life;
-      s.shield=data.shield;
-      s.explode=data.explode,
-      s.r=data.r;
-      s.colour=data.colour;
-    } else if (s.id==ship.id){
-      ships.splice(i,1);
+      normaliseIncomingShipColour(data, s);
+      prepareShipInterpolation(s, data);
+      mergeDefined(s, data);
     }
   }
   if (!found){
+    // Movement broadcasts are intentionally partial packets. If we do not have
+    // the ship yet, ask for a full snapshot so score/life/colour are restored.
     socket.compress(true).emit('needdata');
   }
 }
+
+function mergeDefined(target, source){
+  for (const key of Object.keys(source || {})) {
+    if (source[key] !== undefined) {
+      target[key] = source[key];
+    }
+  }
+}
+
+function safeNumber(value, fallback=0){
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function isValidShipColour(value){
+  return !!value &&
+    typeof value.R === 'number' && Number.isFinite(value.R) &&
+    typeof value.G === 'number' && Number.isFinite(value.G) &&
+    typeof value.B === 'number' && Number.isFinite(value.B);
+}
+
+function safeColour(value, id){
+  if (isValidShipColour(value)) {
+    return {
+      R:constrain(value.R, 0, 255),
+      G:constrain(value.G, 0, 255),
+      B:constrain(value.B, 0, 255)
+    };
+  }
+  return colourFromId(id);
+}
+
+function normaliseIncomingShipColour(incoming, existing){
+  if (!incoming) return;
+  if (isValidShipColour(incoming.colour)) {
+    incoming.colour = safeColour(incoming.colour, incoming.id);
+    return;
+  }
+  if (existing && isValidShipColour(existing.colour)) {
+    incoming.colour = existing.colour;
+    return;
+  }
+  incoming.colour = colourFromId(incoming.id);
+}
+
+function colourFromId(id){
+  const str = String(id || 'ship');
+  let hash = 2166136261;
+  for (let i=0;i<str.length;i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return {
+    R:100 + ((hash >>>  0) % 156),
+    G:100 + ((hash >>>  8) % 156),
+    B:100 + ((hash >>> 16) % 156)
+  };
 }
 
 function moveAsteroids(data){
 
   if (asteroids.length==data.asteroids.length){
-  for (i=0;i<data.asteroids.length;i++){
-    asteroids[i].pos=data.asteroids[i].pos;
-    asteroids[i].vel=data.asteroids[i].vel;
-    Body.setAngle(asteroids[i].body,data.asteroids[i].heading);
-    Body.setAngularVelocity(asteroids[i].body,data.asteroids[i].rotation);
+  for (let i=0;i<data.asteroids.length;i++){
+    Asteroid.applyNetworkUpdate(asteroids[i], data.asteroids[i]);
   }}
   else {
     socket.compress(true).emit('needdata');
@@ -192,11 +411,7 @@ function draw() {
     if (socket.id) {
       ship.id=socket.id;
     }
-    if (frameCount % 1==0 && ship.moved) {
-      var data=ship.getData();
-      // console.log(data);
-      socket.compress(true).volatile.emit('ship',data);
-    }
+    sendShipUpdateIfMoved();
     if (canvas.hasOwnProperty('GL')) {
       translate(-width/2,-height/2);
     }
@@ -224,7 +439,8 @@ function draw() {
 
     // add asteroids and lasers to the quadtree and update the lasers
     qtree = new Quadtree(new Rectangle(gameParams.arena.width/2,gameParams.arena.height/2,gameParams.arena.width/2,gameParams.arena.height/2),qtreeLimit);
-    for (var asteroid of asteroids){
+    for (const asteroid of asteroids){
+      Asteroid.updateNetworkSmoothing(asteroid);
       qtree.insert(new Point(asteroid.pos.x,asteroid.pos.y,asteroid));
     }
     for (var laser of lasers){
@@ -240,12 +456,12 @@ function draw() {
     onScreen.sort(function(a,b){
       return a.userData.r-b.userData.r;
     });
-    for (onScreenPoint of onScreen){
+    for (let onScreenPoint of onScreen){
 
       
       if (onScreenPoint.userData.type=="ASTEROID") {
         // show the asteroid if onscreen and check if it hits the players ship
-        asteroid=onScreenPoint.userData;
+        let asteroid=onScreenPoint.userData;
         Asteroid.show(asteroid);
         if (Asteroid.isHit(asteroid,ship) && !ship.explode){
           let data = {shipid:ship.id,asteroidid:asteroid.id};
@@ -283,7 +499,7 @@ function draw() {
       // for each asteroid query the quadtree for other objects that are close
       let others=qtree.query(new Rectangle(asteroid.pos.x,asteroid.pos.y,gameParams.asteroidSize.max*2,gameParams.asteroidSize.max*2));
 
-      for (otherPoint of others){
+      for (let otherPoint of others){
         if (otherPoint.userData.type=="LASER") {
           // if the laser collides with this asteroid then show an explosion (the asteroid laser collision split is delt with by the server)
           let otherLaser=otherPoint.userData;
@@ -302,7 +518,7 @@ function draw() {
         let otherPoints=qtree.query(new Rectangle(s.pos.x,s.pos.y,gameParams.asteroidSize.max*2,gameParams.asteroidSize.max*2));
 
         for (let p of otherPoints){
-          asteroid=p.userData;
+          let asteroid=p.userData;
           if (asteroid.type=="ASTEROID"){
             if (Asteroid.collides(asteroid,s)){
               if (!s.explode){
@@ -410,8 +626,11 @@ function onScreenDisplay(){
 
   textFont(font);
   text('Level '+gameParams.level,-5,20);
-  fill(ship.colour.R,ship.colour.G,ship.colour.B);
-  text(ship.life+":"+ship.score.toString(),-5,40);
+  const ownColour = safeColour(ship.colour, ship.id);
+  const ownLife = safeNumber(ship.life);
+  const ownScore = safeNumber(ship.score);
+  fill(ownColour.R,ownColour.G,ownColour.B);
+  text(ownLife+":"+ownScore.toString(),-5,40);
   pop();
   if (ship.explode){
     ship.vel.x=0;
@@ -429,16 +648,19 @@ function onScreenDisplay(){
     pop();
   }
   let counter=0;
-  for (s of ships){
-    if (s.id!=ship.id){
+  for (let s of ships){
+    if (s && s.id!=ship.id){
+      const colour = safeColour(s.colour, s.id);
+      const life = safeNumber(s.life);
+      const score = safeNumber(s.score);
       push();
       translate(width-10,5+(counter+2)*20,10);
       textAlign(RIGHT);
       noStroke();
-      fill(s.colour.R,s.colour.G,s.colour.B);
+      fill(colour.R,colour.G,colour.B);
       textSize(20);
       textFont(font);
-      text(s.life+":"+s.score.toString(),-5,20);
+      text(life+":"+score.toString(),-5,20);
       pop();
       counter++;
     }
@@ -465,7 +687,7 @@ function keyPressed(){
   case 'h':
     socket.compress(true).emit('hitall');
     let onScreen=qtree.query(new Rectangle(ship.pos.x,ship.pos.y,width/2+gameParams.asteroidSize.max,height/2+gameParams.asteroidSize.max));
-    for (onScreenPoint of onScreen){
+    for (let onScreenPoint of onScreen){
     if (onScreenPoint.userData.type=="ASTEROID" && explosions.length<=max_explosions) {
       let asteroid=onScreenPoint.userData;
       explosions.push(new Explosion(asteroid.pos.x,asteroid.pos.y,color(252,219,137)));

@@ -167,7 +167,7 @@ class Ship {
       this.vel.y=0;
     }
     
-    for (i=this.lasers.length-1;i>=0;i--){
+    for (let i=this.lasers.length-1;i>=0;i--){
       var laser=this.lasers[i];
       if (laser.pos.x<0-this.size || laser.pos.x>gameParams.arena.width+this.size || laser.pos.y<0-this.size || laser.pos.y>gameParams.arena.height+this.size || laser.life<=0){
         this.lasers.splice(i,1);
@@ -211,17 +211,106 @@ class Ship {
 
 
 
+const REMOTE_SHIP_INTERPOLATION_MS = 100;
+
+function currentClientMillis(){
+  if (typeof millis === 'function') {
+    return millis();
+  }
+  return Date.now();
+}
+
+function clonePoint(point, fallback={x:0,y:0}){
+  return {
+    x: safeNumber(point && point.x, fallback.x),
+    y: safeNumber(point && point.y, fallback.y)
+  };
+}
+
+function normaliseAngle(angle){
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
+
+function lerpAngle(from, to, amount){
+  return from + normaliseAngle(to - from) * amount;
+}
+
+function initialiseRemoteShipSmoothing(s){
+  if (!s) return;
+  const pos = clonePoint(s.pos);
+  const heading = safeNumber(s.heading);
+  s._renderPos = clonePoint(pos);
+  s._renderHeading = heading;
+  s._interpFromPos = clonePoint(pos);
+  s._interpToPos = clonePoint(pos);
+  s._interpFromHeading = heading;
+  s._interpToHeading = heading;
+  s._interpStart = currentClientMillis();
+  s._interpEnd = s._interpStart;
+}
+
+function getSmoothedShipDrawState(s){
+  if (!s || !s.pos) return null;
+  if (!s._renderPos) {
+    initialiseRemoteShipSmoothing(s);
+  }
+
+  const now = currentClientMillis();
+  const duration = Math.max(1, safeNumber(s._interpEnd) - safeNumber(s._interpStart));
+  const amount = constrain((now - safeNumber(s._interpStart)) / duration, 0, 1);
+
+  s._renderPos = {
+    x: lerp(s._interpFromPos.x, s._interpToPos.x, amount),
+    y: lerp(s._interpFromPos.y, s._interpToPos.y, amount)
+  };
+  s._renderHeading = lerpAngle(s._interpFromHeading, s._interpToHeading, amount);
+
+  return {
+    pos: s._renderPos,
+    heading: s._renderHeading
+  };
+}
+
+function prepareShipInterpolation(s, data){
+  if (!s || !data) return;
+  const hasPosition = data.pos && typeof data.pos.x === 'number' && typeof data.pos.y === 'number';
+  const hasHeading = typeof data.heading === 'number';
+  if (!hasPosition && !hasHeading) return;
+
+  const current = getSmoothedShipDrawState(s);
+  const now = currentClientMillis();
+
+  if (hasPosition) {
+    s._interpFromPos = clonePoint(current && current.pos ? current.pos : s.pos);
+    s._interpToPos = clonePoint(data.pos, s._interpFromPos);
+  }
+  if (hasHeading) {
+    s._interpFromHeading = safeNumber(current && current.heading, safeNumber(s.heading));
+    s._interpToHeading = data.heading;
+  }
+
+  s._interpStart = now;
+  s._interpEnd = now + REMOTE_SHIP_INTERPOLATION_MS;
+}
+
 function drawOtherShips(){
   var size=20;
-  for (i=0;i<ships.length;i++){
+  for (let i=0;i<ships.length;i++){
     let s=ships[i];
-    if (s.pos.x>ship.pos.x-width/2-size*2 &&
-        s.pos.x<ship.pos.x+width/2+size*2 &&
-        s.pos.y>ship.pos.y-height/2-size*2 &&
-        s.pos.y<ship.pos.y+height/2+size*2){
+    if (!s || !s.pos) continue;
+    const shipColour = typeof safeColour === 'function' ? safeColour(s.colour, s.id) : (s.colour || {R:255,G:255,B:255});
+    s.colour = shipColour;
+    const smooth = getSmoothedShipDrawState(s);
+    if (!smooth || !smooth.pos) continue;
+    if (smooth.pos.x>ship.pos.x-width/2-size*2 &&
+        smooth.pos.x<ship.pos.x+width/2+size*2 &&
+        smooth.pos.y>ship.pos.y-height/2-size*2 &&
+        smooth.pos.y<ship.pos.y+height/2+size*2){
       push();
-      translate(s.pos.x,s.pos.y);
-      rotate(s.heading);
+      translate(smooth.pos.x,smooth.pos.y);
+      rotate(smooth.heading);
       if (!s.explode){
         if (s.thrustOn){
           stroke(255,0,0,150);
@@ -231,7 +320,7 @@ function drawOtherShips(){
         }
         fill(51);
         strokeWeight(4);
-        stroke(s.colour.R,s.colour.G,s.colour.B);
+        stroke(shipColour.R,shipColour.G,shipColour.B);
         triangle(-size, -size, -size, size, size * 2, 0);
         if (s.shield>0){
             noFill();
@@ -245,7 +334,7 @@ function drawOtherShips(){
         let b={x1:-size  ,y1: size,x2: size*2,y2: 0   };
         let c={x1: size*2,y1: 0   ,x2:-size  ,y2:-size};
         strokeWeight(4);
-        stroke(s.colour.R,s.colour.G,s.colour.B);
+        stroke(shipColour.R,shipColour.G,shipColour.B);
 
         push();
         x=lerp((a.x1+a.x2)/2,-width,s.explodePct);
