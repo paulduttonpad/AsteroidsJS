@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SERVICE_NAME="p5js-asteroids"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+SERVICE_NAME="asteroidsjs"
+SERVICE_FILE="/etc/systmd/system/${SERVICE_NAME}.service"
 
 echo "Disabling ${SERVICE_NAME} systemd service..."
 

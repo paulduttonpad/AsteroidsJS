@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SERVICE_NAME="p5js-asteroids"
+SERVICE_NAME="asteroidsjs"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_USER="${SUDO_USER:-$USER}"
 NODE_BIN="$(command -v node || true)"
