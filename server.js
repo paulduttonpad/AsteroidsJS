@@ -5,7 +5,7 @@ const Ship = require('./ship');
 const {Quadtree,Rectangle} = require('./quadtree');
 const Matter = require('matter-js');
 
-const port = 10001;
+const port = 10000;
 
 // module aliases
 var Engine = Matter.Engine,
@@ -44,8 +44,6 @@ let ships=[];
 let shipIndex={};
 let lasers=[];
 let walls=[];
-
-const split_mag=2;
 
 let express = require('express');
 let app = express();
@@ -105,17 +103,13 @@ function sketch(p) {
             if (ships[shipIndex[id]].shield<=0){
               ships[shipIndex[id]].life-=Math.ceil(asteroid.r*0.5);
             }
-            if (magnitude(ships[shipIndex[id]].vel)+magnitude(asteroid.vel)>split_mag){
-              if (asteroid.r>gameParams.asteroidSize.min) {
-                Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
-              }
-              Asteroid.removeAsteroid(engine,asteroids,asteroid);
-              ships[shipIndex[id]].score++;
-              if (asteroids.length==0){
-                nextLevel();
-              }
-            } else {
-              Body.applyForce(asteroid.body,ships[shipIndex[id]].pos,ships[shipIndex[id]].vel);
+            if (asteroid.r>gameParams.asteroidSize.min) {
+              Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
+            }
+            Asteroid.removeAsteroid(engine,asteroids,asteroid);
+            ships[shipIndex[id]].score++;
+            if (asteroids.length==0){
+              nextLevel();
             }
           }
         }
@@ -270,19 +264,15 @@ function sketch(p) {
               if (s.shield<=0){
                 s.life-=Math.ceil(asteroid.r*0.5);
               }
-              if (magnitude(s.vel)+magnitude(asteroid.vel)>split_mag){
-                if (asteroid.r>gameParams.asteroidSize.min) {
-                  Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
-                }
-                Asteroid.removeAsteroid(engine,asteroids,asteroid);
-                s.score++;
-                if (asteroids.length==0){
-                  nextLevel();
-                }
-                sendData();
-              } else {
-              Body.applyForce(asteroid.body,s.pos,s.vel);
+              if (asteroid.r>gameParams.asteroidSize.min) {
+                Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
               }
+              Asteroid.removeAsteroid(engine,asteroids,asteroid);
+              s.score++;
+              if (asteroids.length==0){
+                nextLevel();
+              }
+              sendData();
             }
             break;
           }
@@ -443,11 +433,6 @@ function addVectorsPing(a,b){
     x:a.x+b.x*ping,
     y:a.y+b.y*ping
   };
-}
-
-function magnitude(v){
-  let mag = Math.sqrt((v.x*v.x)+(v.y*v.y));
-  return mag;
 }
 
 function dist(x1,y1,x2,y2){
