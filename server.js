@@ -5,7 +5,7 @@ const Ship = require('./ship');
 const {Quadtree,Rectangle} = require('./quadtree');
 const Matter = require('matter-js');
 
-const port = 10001;
+const port = 10000;
 
 // module aliases
 var Engine = Matter.Engine,
@@ -20,6 +20,17 @@ let ping=0;
 
 let datatosend=null;
 let socketdatatosend=null;
+
+// Per-client cache of the last compact world state sent to each socket.
+// Regular packets only include changed entities and removed ids.
+const clientSnapshots = new Map();
+let worldVersion = 0;
+const fullSnapshotEveryFrames = 60 * 10;
+const shipBroadcastIntervalMs = 100; // max 10 movement broadcasts per second per ship
+const pendingShipBroadcasts = new Map();
+const shipBroadcastTimers = new Map();
+const lastShipBroadcastAt = new Map();
+const sessionShipColours = new Map();
 
 const sendFrame=10;
 let origGameParams;
@@ -45,16 +56,14 @@ let shipIndex={};
 let lasers=[];
 let walls=[];
 
-const split_mag=2;
-
 let express = require('express');
 let app = express();
 let server = app.listen(port);
 
 function indexShips(){
   shipIndex={};
-  for (i=0;i<ships.length;i++) {
-    ship=ships[i];
+  for (let i=0;i<ships.length;i++) {
+    const ship=ships[i];
     shipIndex[ship.id]=i;
   }
 }
@@ -70,7 +79,9 @@ function sketch(p) {
   function newConnection(socket) {
     console.log(new Date().toString());
     console.log('new connection: '+socket.id);
-    ships.push(new Ship(-1000,-1000,0,socket.id));
+    const newShip = new Ship(-1000,-1000,0,socket.id);
+    newShip.colour = getSessionShipColour(socket.id);
+    ships.push(newShip);
     indexShips();
     console.log('Client Count: '+io.engine.clientsCount);
     sendData(socket);
@@ -79,7 +90,11 @@ function sketch(p) {
     socket.on('ship', shipMsg);
     function shipMsg(data){
       // console.log(data);
-      ship=ships[shipIndex[socket.id]];
+      const ship=ships[shipIndex[socket.id]];
+      if (ship==undefined){
+        sendData(socket);
+        return;
+      }
       if (data.pos!=undefined){
         ship.pos.x=data.pos.x;
         ship.pos.y=data.pos.y;
@@ -89,8 +104,13 @@ function sketch(p) {
         ship.thrustOn=data.thrustOn;
         ship.r=data.r;
         ship.explode=data.explode;
-        ship.colour=data.colour;
-        socketdatatosend={socket:socket,label:'shipdata',data:data};
+        if (isValidShipColour(data.colour)) {
+          ship.colour=normaliseShipColour(data.colour);
+          sessionShipColours.set(socket.id, ship.colour);
+        } else {
+          ship.colour=getSessionShipColour(socket.id);
+        }
+        queueShipBroadcast(socket.id, ship);
       }
       // socket.broadcast.emit('shipdata',data);
     }
@@ -105,17 +125,13 @@ function sketch(p) {
             if (ships[shipIndex[id]].shield<=0){
               ships[shipIndex[id]].life-=Math.ceil(asteroid.r*0.5);
             }
-            if (magnitude(ships[shipIndex[id]].vel)+magnitude(asteroid.vel)>split_mag){
-              if (asteroid.r>gameParams.asteroidSize.min) {
-                Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
-              }
-              Asteroid.removeAsteroid(engine,asteroids,asteroid);
-              ships[shipIndex[id]].score++;
-              if (asteroids.length==0){
-                nextLevel();
-              }
-            } else {
-              Body.applyForce(asteroid.body,ships[shipIndex[id]].pos,ships[shipIndex[id]].vel);
+            if (asteroid.r>gameParams.asteroidSize.min) {
+              Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
+            }
+            Asteroid.removeAsteroid(engine,asteroids,asteroid);
+            ships[shipIndex[id]].score++;
+            if (asteroids.length==0){
+              nextLevel();
             }
           }
         }
@@ -128,7 +144,8 @@ function sketch(p) {
       if (ships[shipIndex[data.id]]!=undefined){
         if (!ships[shipIndex[data.id]].explode){
           ships[shipIndex[data.id]].shield=data.shield;
-          datatosend=Ship.sendLifeData(ships);
+          worldVersion++;
+          const datatosend=Ship.sendLifeData(ships);
         }
       }
     }
@@ -143,19 +160,29 @@ function sketch(p) {
       laser.vel=addVectors(laser.vel,{x:x*20,y:y*20});
 
       lasers.push(laser);
-      datatosend=Laser.sendData(lasers);
+      worldVersion++;
+      // Laser creation is sent in the next deltadata packet.
     }
 
     socket.on('hitall', function() {
-      for (asteroid of asteroids){
+      for (const asteroid of asteroids){
         asteroid.hit={id:socket.id,vel:null};
       }
+      worldVersion++;
     });
 
     socket.on('disconnect', function() {
       console.log(new Date().toString());
       console.log('Got disconnect: '+socket.id);
-      for (i=ships.length-1;i>=0;i--){
+      clientSnapshots.delete(socket.id);
+      pendingShipBroadcasts.delete(socket.id);
+      lastShipBroadcastAt.delete(socket.id);
+      lastShipBroadcastAt.delete(socket.id + ':key');
+      sessionShipColours.delete(socket.id);
+      const timer = shipBroadcastTimers.get(socket.id);
+      if (timer) clearTimeout(timer);
+      shipBroadcastTimers.delete(socket.id);
+      for (let i=ships.length-1;i>=0;i--){
         console.log('Client Count: '+io.engine.clientsCount);
         if (io.engine.clientsCount==0) {
           console.log('Restart and Pause Game');
@@ -169,7 +196,7 @@ function sketch(p) {
           break;
         }
       }
-      sendData();
+      worldVersion++;
     });
 
     socket.on('needdata', function() {
@@ -183,6 +210,7 @@ function sketch(p) {
     socket.on('newasteroid',function(){
       if (asteroids.length<gameParams.asteroidMax){
         asteroids.push(new Asteroid(engine,random(gameParams.arena.width),random(gameParams.arena.height),random(gameParams.asteroidSize.min,gameParams.asteroidSize.max)));
+        worldVersion++;
       }
     });
   }
@@ -199,11 +227,11 @@ function sketch(p) {
   p.draw = () => {
     ping=60/p.frameRate();
     let qtree = new Quadtree(new Rectangle(gameParams.arena.width/2,gameParams.arena.height/2,gameParams.arena.width/2,gameParams.arena.height/2),4);
-    for (asteroid of asteroids){
+    for (const asteroid of asteroids){
       qtree.insert(new Point(asteroid.pos.x,asteroid.pos.y,asteroid));
     }
 
-    for (i=lasers.length-1;i>=0;i--){
+    for (let i=lasers.length-1;i>=0;i--){
       let laser = lasers[i];
       laser.update(ping);
       let keepLaser=true;
@@ -217,14 +245,14 @@ function sketch(p) {
       let otherPoints=qtree.query(new Rectangle(laser.pos.x,laser.pos.y,gameParams.asteroidSize.max*2,gameParams.asteroidSize.max*2));
 
       for (let p of otherPoints){
-        asteroid=p.userData;
+        const asteroid=p.userData;
         if (asteroid.collides(laser)){
           laser.life-=0.5/(laser.r/3);
           asteroid.hit={id:laser.id,vel:{x:laser.vel.x*0.2,y:laser.vel.y*0.2}};
           break;
         }
       }
-      for (s of ships){
+      for (const s of ships){
         if (s.id!=laser.id && !s.explode){
           let d=dist(s.pos.x,s.pos.y,laser.pos.x,laser.pos.y);
           if (d<laser.r+s.r){
@@ -240,49 +268,49 @@ function sketch(p) {
       }
       if (!keepLaser){
         lasers.splice(i,1);
-        sendData();
+        worldVersion++;
       }
     }
 
     for (let i=asteroids.length-1;i>=0;i--){
-      if (asteroids[i].hit != false){
-        ships[shipIndex[asteroids[i].hit.id]].score++;
+      const hit = asteroids[i].hit;
+      if (hit != false){
+        const scoringShip = ships[shipIndex[hit.id]];
+        if (scoringShip != undefined){
+          scoringShip.score++;
+        }
 
         if (asteroids[i].r>gameParams.asteroidSize.min) {
-          Asteroid.split(engine,gameParams,asteroids,asteroids[i],asteroids[i].hit.vel);
+          Asteroid.split(engine,gameParams,asteroids,asteroids[i],hit.vel);
         }
         Asteroid.removeAsteroid(engine,asteroids,asteroids[i]);
         if (asteroids.length==0){
           nextLevel();
         }
-        sendData();
+        worldVersion++;
       }
     }
 
-    for (s of ships){
+    for (const s of ships){
       let otherPoints=qtree.query(new Rectangle(s.pos.x,s.pos.y,gameParams.asteroidSize.max*2,gameParams.asteroidSize.max*2));
 
       if (!s.explode){
         for (let p of otherPoints){
-          asteroid=p.userData;
+          const asteroid=p.userData;
           if (asteroid.collides(s)){
             if (!s.explode){
               if (s.shield<=0){
                 s.life-=Math.ceil(asteroid.r*0.5);
               }
-              if (magnitude(s.vel)+magnitude(asteroid.vel)>split_mag){
-                if (asteroid.r>gameParams.asteroidSize.min) {
-                  Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
-                }
-                Asteroid.removeAsteroid(engine,asteroids,asteroid);
-                s.score++;
-                if (asteroids.length==0){
-                  nextLevel();
-                }
-                sendData();
-              } else {
-              Body.applyForce(asteroid.body,s.pos,s.vel);
+              if (asteroid.r>gameParams.asteroidSize.min) {
+                Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
               }
+              Asteroid.removeAsteroid(engine,asteroids,asteroid);
+              s.score++;
+              if (asteroids.length==0){
+                nextLevel();
+              }
+              worldVersion++;
             }
             break;
           }
@@ -315,7 +343,11 @@ function sketch(p) {
       }
     }
 
-    if (p.frameCount % 30 == 0) {
+    if (p.frameCount % sendFrame == 0) {
+      sendDeltas(io);
+    }
+
+    if (p.frameCount % fullSnapshotEveryFrames == 0) {
       sendData();
     }
 
@@ -345,7 +377,7 @@ function sketch(p) {
     gameParams.arena.height+=inc;
     gameParams.asteroidSize.max*=1.02;
     gameParams.asteroidCount=p.ceil(gameParams.asteroidCount*1.2);
-    for (s of ships){
+    for (const s of ships){
       if (s.shield<100){
         s.shield=100;
       }
@@ -356,39 +388,318 @@ function sketch(p) {
 
 
   function sendData(socket){
-    if (socket!=undefined) {
-      start=socket.id;
+    const startValue = socket != undefined ? socket.id : false;
+    const data = buildFullSnapshot(startValue);
+
+    if (socket != undefined){
+      rememberSnapshot(socket.id, data);
+      socket.compress(true).emit('alldata', data);
     } else {
-      start=false;
+      for (const [id] of io.sockets.sockets) {
+        rememberSnapshot(id, data);
+      }
+      datatosend = {label:'alldata', data:data};
     }
-    data={
-      start:start,
+  }
+
+  function buildFullSnapshot(startValue=false){
+    return {
+      start:startValue,
+      version:worldVersion,
       gameParams:gameParams,
-      asteroids:[],
-      ships:[],
-      lasers:[]
+      asteroids:asteroids.map(a => compactAsteroid(a.getData()).full),
+      ships:ships.map(s => s.getData()),
+      lasers:lasers.map(l => { const d = l.getData(); d.key = laserKey(l); return d; })
     };
-    for (ship of ships){
-      data.ships.push(ship.getData());
+  }
+
+  function sendDeltas(io){
+    if (io.engine.clientsCount === 0) return;
+
+    for (const [id, socket] of io.sockets.sockets) {
+      const previous = clientSnapshots.get(id);
+      if (!previous) {
+        sendData(socket);
+        continue;
+      }
+
+      const current = buildCompactSnapshot();
+      const payload = {
+        version:worldVersion,
+        asteroids:{add:[], update:[], remove:[]},
+        ships:{add:[], update:[], remove:[]},
+        lasers:{add:[], update:[], remove:[]}
+      };
+      let changed = false;
+
+      changed = diffEntitySet('asteroids', previous, current, payload, changed);
+      changed = diffEntitySet('lasers', previous, current, payload, changed);
+      changed = diffShipStatusOnly(previous, current, payload, changed);
+
+      if (previous.gameParamsKey !== current.gameParamsKey) {
+        payload.gameParams = gameParams;
+        changed = true;
+      }
+
+      if (changed) {
+        clientSnapshots.set(id, current);
+        socket.compress(true).emit('deltadata', payload);
+      }
     }
-    for (asteroid of asteroids){
-      data.asteroids.push(asteroid.getData());
-    }
-    for (laser of lasers){
-      data.lasers.push(laser.getData());
+  }
+
+  function diffEntitySet(name, previous, current, payload, changed){
+    const previousMap = previous[name] || new Map();
+    const currentMap = current[name] || new Map();
+
+    for (const [id, entity] of currentMap) {
+      const old = previousMap.get(id);
+      if (!old) {
+        payload[name].add.push(entity.full);
+        changed = true;
+      } else if (old.key !== entity.key) {
+        payload[name].update.push(entity.delta);
+        changed = true;
+      }
     }
 
-    if (socket!=undefined){
-      // socketdatatosend={socket:socket,label:'alldata',data:data};
-      socket.compress(true).volatile.emit('alldata',data);
-    } else {
-      datatosend={label:'alldata',data:data};
-      // io.emit('alldata',data);
+    for (const id of previousMap.keys()) {
+      if (!currentMap.has(id)) {
+        payload[name].remove.push(id);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function diffShipStatusOnly(previous, current, payload, changed){
+    const previousMap = previous.ships || new Map();
+    const currentMap = current.ships || new Map();
+
+    for (const [id, entity] of currentMap) {
+      const old = previousMap.get(id);
+      if (!old) {
+        payload.ships.add.push(entity.full);
+        changed = true;
+      } else if (old.statusKey !== entity.statusKey) {
+        // Ship movement/position is no longer sent in the regular world tick.
+        // Movement is pushed separately by queueShipBroadcast(), capped at 10/sec.
+        payload.ships.update.push(entity.statusDelta);
+        changed = true;
+      }
+    }
+
+    for (const id of previousMap.keys()) {
+      if (!currentMap.has(id)) {
+        payload.ships.remove.push(id);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function queueShipBroadcast(socketId, ship){
+    if (!ship) return;
+
+    const packet = compactShip(ship.getData()).movementDelta;
+    const nextKey = stableStringify(packet);
+    const oldKey = lastShipBroadcastAt.get(socketId + ':key');
+    if (oldKey === nextKey) return;
+
+    pendingShipBroadcasts.set(socketId, packet);
+    const now = Date.now();
+    const lastSentAt = lastShipBroadcastAt.get(socketId) || 0;
+    const waitMs = Math.max(0, shipBroadcastIntervalMs - (now - lastSentAt));
+
+    if (waitMs === 0) {
+      flushShipBroadcast(socketId);
+      return;
+    }
+
+    if (!shipBroadcastTimers.has(socketId)) {
+      const timer = setTimeout(() => {
+        shipBroadcastTimers.delete(socketId);
+        flushShipBroadcast(socketId);
+      }, waitMs);
+      shipBroadcastTimers.set(socketId, timer);
+    }
+  }
+
+  function flushShipBroadcast(socketId){
+    const packet = pendingShipBroadcasts.get(socketId);
+    if (!packet) return;
+
+    pendingShipBroadcasts.delete(socketId);
+    lastShipBroadcastAt.set(socketId, Date.now());
+    lastShipBroadcastAt.set(socketId + ':key', stableStringify(packet));
+
+    const sourceSocket = io.sockets.sockets.get(socketId);
+    if (sourceSocket) {
+      // Only other clients need this packet; the source client is already predicting itself.
+      sourceSocket.broadcast.compress(true).volatile.emit('shipdata', packet);
     }
   }
 
 
+  function getSessionShipColour(socketId){
+    const existing = sessionShipColours.get(socketId);
+    if (isValidShipColour(existing)) return existing;
+
+    const colour = colourFromId(socketId);
+    sessionShipColours.set(socketId, colour);
+    return colour;
+  }
+
+  function normaliseShipColour(colour){
+    return {
+      R:clampColourChannel(colour.R),
+      G:clampColourChannel(colour.G),
+      B:clampColourChannel(colour.B)
+    };
+  }
+
+  function clampColourChannel(value){
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 255;
+    return Math.max(0, Math.min(255, value));
+  }
+
+  function colourFromId(id){
+    // Deterministic non-white fallback. This avoids the temporary white server
+    // placeholder ever leaking into full snapshots/deltas if a client refreshes
+    // and its first colour packet has not arrived yet.
+    const str = String(id || 'ship');
+    let hash = 2166136261;
+    for (let i=0;i<str.length;i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return {
+      R:100 + ((hash >>>  0) % 156),
+      G:100 + ((hash >>>  8) % 156),
+      B:100 + ((hash >>> 16) % 156)
+    };
+  }
+
+  function isValidShipColour(colour){
+    return !!colour &&
+      typeof colour.R === 'number' && Number.isFinite(colour.R) &&
+      typeof colour.G === 'number' && Number.isFinite(colour.G) &&
+      typeof colour.B === 'number' && Number.isFinite(colour.B);
+  }
+
+  function rememberSnapshot(socketId, fullSnapshot){
+    clientSnapshots.set(socketId, compactFromFullSnapshot(fullSnapshot));
+  }
+
+  function compactFromFullSnapshot(fullSnapshot){
+    const snapshot = emptyCompactSnapshot();
+    snapshot.gameParamsKey = stableStringify(gameParams);
+    for (const asteroid of fullSnapshot.asteroids) snapshot.asteroids.set(String(asteroid.id), compactAsteroid(asteroid));
+    for (const laser of fullSnapshot.lasers) snapshot.lasers.set(laser.key || laserKey(laser), compactLaser(laser));
+    for (const ship of fullSnapshot.ships) snapshot.ships.set(String(ship.id), compactShip(ship));
+    return snapshot;
+  }
+
+  function buildCompactSnapshot(){
+    const snapshot = emptyCompactSnapshot();
+    snapshot.gameParamsKey = stableStringify(gameParams);
+    for (const asteroid of asteroids) snapshot.asteroids.set(String(asteroid.id), compactAsteroid(asteroid.getData()));
+    for (const laser of lasers) { const key = laserKey(laser); const full = laser.getData(); full.key = key; snapshot.lasers.set(key, compactLaser(full)); }
+    for (const ship of ships) snapshot.ships.set(String(ship.id), compactShip(ship.getData()));
+    return snapshot;
+  }
+
+  function emptyCompactSnapshot(){
+    return {gameParamsKey:'', asteroids:new Map(), ships:new Map(), lasers:new Map()};
+  }
+
+  function compactAsteroid(full){
+    // Send raw JavaScript number precision for asteroid movement metadata.
+    // Client-side smoothing/dead-reckoning handles visual stability instead
+    // of relying on lossy server-side rounding.
+    const delta = {
+      id:String(full.id),
+      pos:{x:r(full.pos.x), y:r(full.pos.y)},
+      vel:{x:r(full.vel.x), y:r(full.vel.y)},
+      heading:r(full.heading),
+      rotation:r(full.rotation)
+    };
+    const fullPacket = Object.assign({}, full, delta);
+    if (typeof full.r === 'number') fullPacket.r = r(full.r);
+    return {full:fullPacket, delta, key:stableStringify(delta)};
+  }
+
+  function compactLaser(full){
+    const key = full.key || laserKey(full);
+    const delta = {
+      key,
+      id:String(full.id),
+      pos:{x:r(full.pos.x), y:r(full.pos.y)},
+      vel:{x:r(full.vel.x), y:r(full.vel.y)},
+      life:r(full.life, 3),
+      r:r(full.r, 2),
+      heading:r(full.heading, 3),
+      colour:full.colour
+    };
+    return {full:Object.assign({}, full, delta), delta, key:stableStringify(delta)};
+  }
+
+  function compactShip(full){
+    const movementDelta = {
+      id:String(full.id),
+      pos:{x:r(full.pos.x), y:r(full.pos.y)},
+      vel:{x:r(full.vel.x), y:r(full.vel.y)},
+      thrustOn:!!full.thrustOn,
+      heading:r(full.heading, 3),
+      explode:!!full.explode,
+      explodePct:r(full.explodePct || 0, 3),
+      r:full.r,
+      colour:full.colour
+    };
+    const statusDelta = {
+      id:String(full.id),
+      score:full.score,
+      life:full.life,
+      shield:full.shield,
+      explode:!!full.explode,
+      explodePct:r(full.explodePct || 0, 3),
+      colour:full.colour
+    };
+    const fullDelta = Object.assign({}, movementDelta, statusDelta);
+    return {
+      full:Object.assign({}, full, fullDelta),
+      delta:fullDelta,
+      movementDelta,
+      selfDelta:statusDelta,
+      statusDelta,
+      key:stableStringify(fullDelta),
+      movementKey:stableStringify(movementDelta),
+      statusKey:stableStringify(statusDelta)
+    };
+  }
+
+  function laserKey(laser){
+    if (!laser._netKey) {
+      laser._netKey = [laser.id, r(laser.heading, 3), r(laser.pos.x), r(laser.pos.y), Date.now(), Math.random().toString(36).slice(2,7)].join(':');
+    }
+    return laser._netKey;
+  }
+
+  function r(value){
+    // Full precision mode: keep finite JavaScript numbers exactly as the
+    // simulation currently has them. JSON.stringify will serialize the
+    // shortest round-trippable decimal representation for the number.
+    if (typeof value !== 'number' || !Number.isFinite(value)) return value || 0;
+    return value;
+  }
+
+  function stableStringify(value){
+    return JSON.stringify(value);
+  }
+
+
   function resetGame(){
+    worldVersion++;
     removeWalls();
     createWalls();
     for (var i=0;i<gameParams.asteroidCount;i++){
@@ -399,6 +710,8 @@ function sketch(p) {
   }
 
   function restartGame(){
+    worldVersion++;
+    clientSnapshots.clear();
     gameParams = JSON.parse(JSON.stringify(origGameParams));
     let removes = [];
     for (let body of engine.world.bodies){
@@ -443,11 +756,6 @@ function addVectorsPing(a,b){
     x:a.x+b.x*ping,
     y:a.y+b.y*ping
   };
-}
-
-function magnitude(v){
-  let mag = Math.sqrt((v.x*v.x)+(v.y*v.y));
-  return mag;
 }
 
 function dist(x1,y1,x2,y2){

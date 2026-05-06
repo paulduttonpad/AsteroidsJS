@@ -50,7 +50,7 @@ class Laser{
     }
   }
   static sendData(lasers){
-    data={
+    const data={
       lasers:[]
     };
     for (let laser of lasers){

@@ -51,7 +51,7 @@ class Ship{
   }
 
   static sendLifeData(ships){
-    data={
+    const data={
       ships:[]
     };
     for (let ship of ships){
