@@ -33,7 +33,7 @@ To get a local copy up and running follow these simple steps.
   node server.js
 
 ### Playing the Game
-After starting the server, open your web browser and go to http://localhost:10001 to start playing. Use the arrow keys to move your spaceship and the spacebar to shoot asteroids.
+After starting the server, open your web browser and go to http://localhost:10000 to start playing. Use the arrow keys to move your spaceship and the spacebar to shoot asteroids.
 
 ## Contributing
 Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are greatly appreciated.
