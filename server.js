@@ -5,7 +5,7 @@ const Ship = require('./ship');
 const {Quadtree,Rectangle} = require('./quadtree');
 const Matter = require('matter-js');
 
-const port = 10001;
+const port = 10000;
 
 // module aliases
 var Engine = Matter.Engine,
