@@ -1,11 +1,11 @@
-const p5 = require('node-p5');
+const { ServerLoop } = require('./server-loop');
 const Asteroid = require('./asteroid');
 const Laser = require('./laser');
 const Ship = require('./ship');
 const {Quadtree,Rectangle} = require('./quadtree');
 const Matter = require('matter-js');
 
-const port = 10000;
+const port = 10001;
 
 // module aliases
 var Engine = Matter.Engine,
@@ -731,7 +731,7 @@ function sketch(p) {
 
 
 
-let p5Instance = p5.createSketch(sketch);
+const serverLoop = new ServerLoop().start(sketch);
 
 
 
