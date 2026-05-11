@@ -8,7 +8,7 @@ class Powerup{
     this.r=this.type==='HEALTH' ? 16 : this.type==='SHIELD' ? 16 : 14;
     this.level=1;
     this.health=50;
-    this.shield=60*15;
+    this.shield=0;
     this.life=60*15;
     this.attractionRadius=200;
     this.colour=this.type==='HEALTH' ? {R:255,G:0,B:0} : this.type==='SHIELD' ? {R:40,G:140,B:255} : {R:255,G:220,B:60};

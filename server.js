@@ -40,6 +40,7 @@ const pendingShipBroadcasts = new Map();
 const shipBroadcastTimers = new Map();
 const lastShipBroadcastAt = new Map();
 const sessionShipColours = new Map();
+const SHIELD_HIT_PENALTY = 10;
 
 const sendFrame=10;
 let origGameParams;
@@ -132,9 +133,12 @@ function sketch(p) {
       if (asteroid!=null){
         if (ships[shipIndex[id]]!=undefined){
           if (!ships[shipIndex[id]].explode){
-            if (ships[shipIndex[id]].shield<=0){
-              ships[shipIndex[id]].life-=Math.ceil(asteroid.r*0.5);
-              reduceShipPowerupLevel(ships[shipIndex[id]], 2);
+            const hitShip = ships[shipIndex[id]];
+            if (hitShip.shield > 0) {
+              reduceShipShieldTime(hitShip);
+            } else {
+              hitShip.life-=Math.ceil(asteroid.r*0.5);
+              reduceShipPowerupLevel(hitShip, 2);
             }
             if (asteroid.r>gameParams.asteroidSize.min) {
               Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
@@ -351,7 +355,9 @@ function sketch(p) {
           const asteroid=p.userData;
           if (asteroid.collides(s)){
             if (!s.explode){
-              if (s.shield<=0){
+              if (s.shield > 0) {
+                reduceShipShieldTime(s);
+              } else {
                 s.life-=Math.ceil(asteroid.r*0.5);
                 reduceShipPowerupLevel(s, 1);
               }
@@ -373,10 +379,14 @@ function sketch(p) {
         for (let s2 of ships){
           if (s!=s2 && !s2.explode){
             if (s.collides(s2)){
-              if (s.shield<=0){
+              if (s.shield > 0) {
+                reduceShipShieldTime(s);
+              } else {
                 s.life-=5;
               }
-              if (s2.shield<=0){
+              if (s2.shield > 0) {
+                reduceShipShieldTime(s2);
+              } else {
                 s2.life-=5;
               }
               break;
@@ -919,5 +929,12 @@ function removeWalls(){
     Composite.remove(engine.world, walls);
   }
 }
+
+function reduceShipShieldTime(ship, amount = SHIELD_HIT_PENALTY) {
+  if (ship.shield > 0 && ship.shield < 100000) {
+    ship.shield = Math.max(0, ship.shield - amount);
+  }
+}
+
 
 
