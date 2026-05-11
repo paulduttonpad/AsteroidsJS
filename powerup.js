@@ -8,7 +8,7 @@ class Powerup{
     this.r=14;
     this.level=1;
     this.life=60*45;
-    this.attractionRadius=100;
+    this.attractionRadius=200;
     this.colour={R:255,G:220,B:60};
   }
 

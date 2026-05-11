@@ -678,7 +678,7 @@ function onScreenDisplay(){
   const ownLife = safeNumber(ship.life);
   const ownScore = safeNumber(ship.score);
   fill(ownColour.R,ownColour.G,ownColour.B);
-  text(ownPowerupLevel+":"+ownLife+":"+ownScore.toString(),-5,40);
+  text(ownPowerupLevel.toString()+":"+ownLife.toString()+":"+ownScore.toString(),-5,40);
   pop();
   if (ship.explode){
     ship.vel.x=0;
@@ -709,7 +709,7 @@ function onScreenDisplay(){
       fill(colour.R,colour.G,colour.B);
       textSize(20);
       textFont(font);
-      text(powerupLevel+":"+life+":"+score.toString(),-5,20);
+      text(powerupLevel.toString()+":"+life.toString()+":"+score.toString(),-5,20);
       pop();
       counter++;
     }

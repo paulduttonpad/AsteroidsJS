@@ -394,7 +394,7 @@ function sketch(p) {
   }
 
   function maybeDropPowerup(asteroid){
-    if (!asteroid || random(1) >= 0.10) return;
+    if (!asteroid || random(1) >= 0.05) return;
     powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y));
   }
 

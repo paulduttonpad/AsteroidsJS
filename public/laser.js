@@ -3,10 +3,10 @@ class Laser{
     if (!this.edges(laser)){
       push();
       translate(laser.pos.x, laser.pos.y);
-      noFill();
-      strokeWeight(laser.r*2);
-      stroke(lerpColor(color(laser.colour.R,laser.colour.G,laser.colour.B),color(gameParams.arena.colour),1-laser.life));
-      point(0,0);
+      rotate(laser.heading || 0);
+      noStroke();
+      fill(lerpColor(color(laser.colour.R,laser.colour.G,laser.colour.B),color(gameParams.arena.colour),1-laser.life));
+      ellipse(0,0,laser.r*4,laser.r*2);
       pop();
     }
   }
