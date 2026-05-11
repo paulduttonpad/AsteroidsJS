@@ -33,7 +33,7 @@ const POWERUP_LEVELS_PER_LASER = 5;
 const LASER_SPREAD_DEGREES = 10;
 const POWERUP_DROP_CHANCE = 0.02;
 const HEALTH_POWERUP_DROP_CHANCE = 0.01;
-const SHIELD_POWERUP_DROP_CHANCE = 0.01;
+const SHIELD_POWERUP_DROP_CHANCE = 0.03;
 const SHIELD_POWERUP_DURATION = 60 * 15;
 const MAX_HEALTH = 250;
 const pendingShipBroadcasts = new Map();
@@ -306,7 +306,7 @@ function sketch(p) {
           if (powerup.type === 'HEALTH') {
             s.life = Math.min(MAX_HEALTH, s.life + (powerup.health || 50));
           } else if (powerup.type === 'SHIELD') {
-            s.shield = SHIELD_POWERUP_DURATION;
+            s.shield = Math.max(0, s.shield || 0) + (powerup.shield || SHIELD_POWERUP_DURATION);
           } else {
             s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + powerup.level);
             s.score += 100;
