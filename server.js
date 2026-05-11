@@ -2,6 +2,7 @@ const { ServerLoop } = require('./server-loop');
 const Asteroid = require('./asteroid');
 const Laser = require('./laser');
 const Ship = require('./ship');
+const Powerup = require('./powerup');
 const {Quadtree,Rectangle} = require('./quadtree');
 const Matter = require('matter-js');
 
@@ -27,6 +28,14 @@ const clientSnapshots = new Map();
 let worldVersion = 0;
 const fullSnapshotEveryFrames = 60 * 10;
 const shipBroadcastIntervalMs = 100; // max 10 movement broadcasts per second per ship
+const POWERUP_LEVEL_CAP = 50;
+const POWERUP_LEVELS_PER_LASER = 5;
+const LASER_SPREAD_DEGREES = 10;
+const POWERUP_DROP_CHANCE = 0.02;
+const HEALTH_POWERUP_DROP_CHANCE = 0.01;
+const SHIELD_POWERUP_DROP_CHANCE = 0.01;
+const SHIELD_POWERUP_DURATION = 60 * 15;
+const MAX_HEALTH = 250;
 const pendingShipBroadcasts = new Map();
 const shipBroadcastTimers = new Map();
 const lastShipBroadcastAt = new Map();
@@ -54,6 +63,7 @@ let asteroids = [];
 let ships=[];
 let shipIndex={};
 let lasers=[];
+let powerups=[];
 let walls=[];
 
 let express = require('express');
@@ -124,10 +134,12 @@ function sketch(p) {
           if (!ships[shipIndex[id]].explode){
             if (ships[shipIndex[id]].shield<=0){
               ships[shipIndex[id]].life-=Math.ceil(asteroid.r*0.5);
+              reduceShipPowerupLevel(ships[shipIndex[id]], 2);
             }
             if (asteroid.r>gameParams.asteroidSize.min) {
               Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
             }
+            maybeDropPowerup(asteroid);
             Asteroid.removeAsteroid(engine,asteroids,asteroid);
             ships[shipIndex[id]].score++;
             if (asteroids.length==0){
@@ -152,14 +164,20 @@ function sketch(p) {
 
     socket.on('fire', fire);
     function fire(data){
-      var laser = new Laser(data.pos.x,data.pos.y,data.r,data.heading,data.id,data.vel.x,data.vel.y);
-      var x=Math.cos(data.heading);
-      var y=Math.sin(data.heading);
+      const firingShip = ships[shipIndex[data.id]];
+      if (!firingShip || firingShip.explode) return;
 
-      laser.pos=addVectors(laser.pos,{x:x*data.r,y:y*data.r});
-      laser.vel=addVectors(laser.vel,{x:x*20,y:y*20});
+      const laserProfile = getPoweredLaserProfile(data.r, firingShip);
+      for (const heading of getLaserHeadings(data.heading, laserProfile.count)) {
+        const laser = new Laser(data.pos.x,data.pos.y,laserProfile.radius,heading,data.id,data.vel.x,data.vel.y);
+        const x=Math.cos(heading);
+        const y=Math.sin(heading);
 
-      lasers.push(laser);
+        laser.pos=addVectors(laser.pos,{x:x*laserProfile.radius,y:y*laserProfile.radius});
+        laser.vel=addVectors(laser.vel,{x:x*20,y:y*20});
+
+        lasers.push(laser);
+      }
       worldVersion++;
       // Laser creation is sent in the next deltadata packet.
     }
@@ -168,6 +186,13 @@ function sketch(p) {
       for (const asteroid of asteroids){
         asteroid.hit={id:socket.id,vel:null};
       }
+      worldVersion++;
+    });
+
+    socket.on('powerup', function() {
+      const s = ships[shipIndex[socket.id]];
+      if (!s || s.explode) return;
+      s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + 1);
       worldVersion++;
     });
 
@@ -272,6 +297,32 @@ function sketch(p) {
       }
     }
 
+    for (let i=powerups.length-1;i>=0;i--){
+      const powerup = powerups[i];
+      powerup.update(ping, ships, gameParams);
+      let collected = false;
+      for (const s of ships){
+        if (!s.explode && powerup.collides(s)){
+          if (powerup.type === 'HEALTH') {
+            s.life = Math.min(MAX_HEALTH, s.life + (powerup.health || 50));
+          } else if (powerup.type === 'SHIELD') {
+            s.shield = SHIELD_POWERUP_DURATION;
+          } else {
+            s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + powerup.level);
+            s.score += 100;
+          }
+          powerups.splice(i,1);
+          collected = true;
+          worldVersion++;
+          break;
+        }
+      }
+      if (!collected && powerup.life <= 0){
+        powerups.splice(i,1);
+        worldVersion++;
+      }
+    }
+
     for (let i=asteroids.length-1;i>=0;i--){
       const hit = asteroids[i].hit;
       if (hit != false){
@@ -283,6 +334,7 @@ function sketch(p) {
         if (asteroids[i].r>gameParams.asteroidSize.min) {
           Asteroid.split(engine,gameParams,asteroids,asteroids[i],hit.vel);
         }
+        maybeDropPowerup(asteroids[i]);
         Asteroid.removeAsteroid(engine,asteroids,asteroids[i]);
         if (asteroids.length==0){
           nextLevel();
@@ -301,10 +353,12 @@ function sketch(p) {
             if (!s.explode){
               if (s.shield<=0){
                 s.life-=Math.ceil(asteroid.r*0.5);
+                reduceShipPowerupLevel(s, 1);
               }
               if (asteroid.r>gameParams.asteroidSize.min) {
                 Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
               }
+              maybeDropPowerup(asteroid);
               Asteroid.removeAsteroid(engine,asteroids,asteroid);
               s.score++;
               if (asteroids.length==0){
@@ -367,6 +421,61 @@ function sketch(p) {
     }
   }
 
+  function maybeDropPowerup(asteroid){
+    if (!asteroid) return;
+    if (random(1) < POWERUP_DROP_CHANCE) {
+      powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y));
+    }
+    if (random(1) < HEALTH_POWERUP_DROP_CHANCE) {
+      powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y, 'HEALTH'));
+    }
+    if (random(1) < SHIELD_POWERUP_DROP_CHANCE) {
+      powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y, 'SHIELD'));
+    }
+  }
+
+  function reduceShipPowerupLevel(ship, amount){
+    if (!ship) return;
+    ship.powerupLevel = Math.max(1, (ship.powerupLevel || 1) - amount);
+  }
+
+  function getPoweredLaserProfile(requestedRadius, ship){
+    const baseRadius = typeof requestedRadius === 'number' && Number.isFinite(requestedRadius) ? requestedRadius : 10;
+    const powerupLevel = clampPowerupLevel(ship && Number.isFinite(ship.powerupLevel) ? ship.powerupLevel : 1);
+    const step = getPowerupCycleStep(powerupLevel);
+    return {
+      count:getPowerupLaserCount(powerupLevel),
+      radius:baseRadius + step*4
+    };
+  }
+
+  function getPowerupLaserCount(powerupLevel){
+    const cappedLevel = clampPowerupLevel(powerupLevel);
+    return Math.min(12, Math.ceil(cappedLevel / POWERUP_LEVELS_PER_LASER));
+  }
+
+  function getPowerupCycleStep(powerupLevel){
+    const cappedLevel = clampPowerupLevel(powerupLevel);
+    return ((cappedLevel - 1) % POWERUP_LEVELS_PER_LASER) + 1;
+  }
+
+  function getLaserHeadings(baseHeading, count){
+    const heading = typeof baseHeading === 'number' && Number.isFinite(baseHeading) ? baseHeading : 0;
+    const laserCount = Math.max(1, Math.min(12, count || 1));
+    const spreadRadians = LASER_SPREAD_DEGREES * Math.PI / 180;
+    const centreOffset = (laserCount - 1) / 2;
+    const headings = [];
+    for (let i=0;i<laserCount;i++) {
+      headings.push(heading + (i - centreOffset) * spreadRadians);
+    }
+    return headings;
+  }
+
+  function clampPowerupLevel(powerupLevel){
+    if (typeof powerupLevel !== 'number' || !Number.isFinite(powerupLevel)) return 1;
+    return Math.max(1, Math.min(POWERUP_LEVEL_CAP, Math.floor(powerupLevel)));
+  }
+
   function nextLevel(){
     let inc=gameParams.arena.width*0.1;
     if (inc>1000){
@@ -409,7 +518,8 @@ function sketch(p) {
       gameParams:gameParams,
       asteroids:asteroids.map(a => compactAsteroid(a.getData()).full),
       ships:ships.map(s => s.getData()),
-      lasers:lasers.map(l => { const d = l.getData(); d.key = laserKey(l); return d; })
+      lasers:lasers.map(l => { const d = l.getData(); d.key = laserKey(l); return d; }),
+      powerups:powerups.map(p => p.getData())
     };
   }
 
@@ -428,12 +538,14 @@ function sketch(p) {
         version:worldVersion,
         asteroids:{add:[], update:[], remove:[]},
         ships:{add:[], update:[], remove:[]},
-        lasers:{add:[], update:[], remove:[]}
+        lasers:{add:[], update:[], remove:[]},
+        powerups:{add:[], update:[], remove:[]}
       };
       let changed = false;
 
       changed = diffEntitySet('asteroids', previous, current, payload, changed);
       changed = diffEntitySet('lasers', previous, current, payload, changed);
+      changed = diffEntitySet('powerups', previous, current, payload, changed);
       changed = diffShipStatusOnly(previous, current, payload, changed);
 
       if (previous.gameParamsKey !== current.gameParamsKey) {
@@ -596,6 +708,7 @@ function sketch(p) {
     snapshot.gameParamsKey = stableStringify(gameParams);
     for (const asteroid of fullSnapshot.asteroids) snapshot.asteroids.set(String(asteroid.id), compactAsteroid(asteroid));
     for (const laser of fullSnapshot.lasers) snapshot.lasers.set(laser.key || laserKey(laser), compactLaser(laser));
+    for (const powerup of fullSnapshot.powerups || []) snapshot.powerups.set(String(powerup.id), compactPowerup(powerup));
     for (const ship of fullSnapshot.ships) snapshot.ships.set(String(ship.id), compactShip(ship));
     return snapshot;
   }
@@ -605,12 +718,13 @@ function sketch(p) {
     snapshot.gameParamsKey = stableStringify(gameParams);
     for (const asteroid of asteroids) snapshot.asteroids.set(String(asteroid.id), compactAsteroid(asteroid.getData()));
     for (const laser of lasers) { const key = laserKey(laser); const full = laser.getData(); full.key = key; snapshot.lasers.set(key, compactLaser(full)); }
+    for (const powerup of powerups) snapshot.powerups.set(String(powerup.id), compactPowerup(powerup.getData()));
     for (const ship of ships) snapshot.ships.set(String(ship.id), compactShip(ship.getData()));
     return snapshot;
   }
 
   function emptyCompactSnapshot(){
-    return {gameParamsKey:'', asteroids:new Map(), ships:new Map(), lasers:new Map()};
+    return {gameParamsKey:'', asteroids:new Map(), ships:new Map(), lasers:new Map(), powerups:new Map()};
   }
 
   function compactAsteroid(full){
@@ -661,6 +775,7 @@ function sketch(p) {
       score:full.score,
       life:full.life,
       shield:full.shield,
+      powerupLevel:full.powerupLevel || 1,
       explode:!!full.explode,
       explodePct:r(full.explodePct || 0, 3),
       colour:full.colour
@@ -676,6 +791,21 @@ function sketch(p) {
       movementKey:stableStringify(movementDelta),
       statusKey:stableStringify(statusDelta)
     };
+  }
+
+  function compactPowerup(full){
+    const delta = {
+      id:String(full.id),
+      type:full.type || 'POWERUP',
+      pos:{x:r(full.pos.x), y:r(full.pos.y)},
+      vel:{x:r(full.vel.x), y:r(full.vel.y)},
+      r:r(full.r, 2),
+      level:full.level || 1,
+      health:full.health || 50,
+      life:r(full.life, 2),
+      colour:full.colour
+    };
+    return {full:Object.assign({}, full, delta), delta, key:stableStringify(delta)};
   }
 
   function laserKey(laser){
@@ -724,6 +854,7 @@ function sketch(p) {
     }
     asteroids = [];
     lasers=[];
+    powerups=[];
     resetGame();
   }
 

@@ -18,6 +18,7 @@ class Ship {
   this.explode=false;
   this.explodePct=0;
   this.shield=0;
+  this.powerupLevel=1;
   
   this.lasers = [];
 }
@@ -34,6 +35,7 @@ class Ship {
       size:this.size,
       life:this.life,
       shield:this.shield,
+      powerupLevel:this.powerupLevel,
       explode:this.explode,
       explodePct:this.explodePct,
       colour:this.colour
@@ -58,7 +60,7 @@ class Ship {
       strokeWeight(4);
       stroke(this.colour.R,this.colour.G,this.colour.B);
       triangle(-this.size, -this.size, -this.size, this.size, this.size * 2, 0);
-      if (this.shield>0){
+      if (this.shield>0 && (this.shield>60*5 || floor(this.shield/10)%2===0)){
         noFill();
         strokeWeight(4);
         stroke(map(sin(this.shield/4),-1,1,100,140), map(sin(this.shield/4),-1,1,150,220), map(sin(this.shield/4),-1,1,155,255));
@@ -178,6 +180,19 @@ class Ship {
   isHit(object){
     var d=dist(this.pos.x,this.pos.y,object.pos.x,object.pos.y);
     return (d<this.r+object.r+20);
+  }
+
+  getPowerupCycleStep(){
+    const cappedLevel = Math.max(1, Math.min(60, Math.floor(this.powerupLevel || 1)));
+    return ((cappedLevel - 1) % 5) + 1;
+  }
+
+  getLaserRadius(baseRadius=10){
+    return baseRadius + this.getPowerupCycleStep()*4;
+  }
+
+  getLaserFireDelay(){
+    return Math.max(60, 200 - this.getPowerupCycleStep()*20);
   }
 
   fire(r){
@@ -322,7 +337,7 @@ function drawOtherShips(){
         strokeWeight(4);
         stroke(shipColour.R,shipColour.G,shipColour.B);
         triangle(-size, -size, -size, size, size * 2, 0);
-        if (s.shield>0){
+        if (s.shield>0 && (s.shield>60*5 || floor(s.shield/10)%2===0)){
             noFill();
             strokeWeight(4);
             stroke(map(sin(s.shield/4),-1,1,100,140), map(sin(s.shield/4),-1,1,150,220), map(sin(s.shield/4),-1,1,155,255));
