@@ -5,12 +5,13 @@ class Powerup{
     this.pos = {x:x,y:y};
     this.vel = {x:random(-2,2),y:random(-2,2)};
     this.acc = {x:0,y:0};
-    this.r=this.type==='HEALTH' ? 16 : 14;
+    this.r=this.type==='HEALTH' ? 16 : this.type==='SHIELD' ? 16 : 14;
     this.level=1;
     this.health=50;
+    this.shield=60*15;
     this.life=60*15;
     this.attractionRadius=200;
-    this.colour=this.type==='HEALTH' ? {R:255,G:0,B:0} : {R:255,G:220,B:60};
+    this.colour=this.type==='HEALTH' ? {R:255,G:0,B:0} : this.type==='SHIELD' ? {R:40,G:140,B:255} : {R:255,G:220,B:60};
   }
 
   update(ping, ships, gameParams) {
@@ -90,6 +91,7 @@ class Powerup{
       r:this.r,
       level:this.level,
       health:this.health,
+      shield:this.shield,
       life:this.life,
       colour:this.colour
     }

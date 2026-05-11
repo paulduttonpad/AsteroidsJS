@@ -60,7 +60,7 @@ class Ship {
       strokeWeight(4);
       stroke(this.colour.R,this.colour.G,this.colour.B);
       triangle(-this.size, -this.size, -this.size, this.size, this.size * 2, 0);
-      if (this.shield>0){
+      if (this.shield>0 && (this.shield>60*5 || floor(this.shield/10)%2===0)){
         noFill();
         strokeWeight(4);
         stroke(map(sin(this.shield/4),-1,1,100,140), map(sin(this.shield/4),-1,1,150,220), map(sin(this.shield/4),-1,1,155,255));
@@ -337,7 +337,7 @@ function drawOtherShips(){
         strokeWeight(4);
         stroke(shipColour.R,shipColour.G,shipColour.B);
         triangle(-size, -size, -size, size, size * 2, 0);
-        if (s.shield>0){
+        if (s.shield>0 && (s.shield>60*5 || floor(s.shield/10)%2===0)){
             noFill();
             strokeWeight(4);
             stroke(map(sin(s.shield/4),-1,1,100,140), map(sin(s.shield/4),-1,1,150,220), map(sin(s.shield/4),-1,1,155,255));

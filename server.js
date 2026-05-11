@@ -33,6 +33,9 @@ const POWERUP_LEVELS_PER_LASER = 5;
 const LASER_SPREAD_DEGREES = 10;
 const POWERUP_DROP_CHANCE = 0.02;
 const HEALTH_POWERUP_DROP_CHANCE = 0.01;
+const SHIELD_POWERUP_DROP_CHANCE = 0.01;
+const SHIELD_POWERUP_DURATION = 60 * 15;
+const MAX_HEALTH = 250;
 const pendingShipBroadcasts = new Map();
 const shipBroadcastTimers = new Map();
 const lastShipBroadcastAt = new Map();
@@ -301,7 +304,9 @@ function sketch(p) {
       for (const s of ships){
         if (!s.explode && powerup.collides(s)){
           if (powerup.type === 'HEALTH') {
-            s.life += powerup.health || 50;
+            s.life = Math.min(MAX_HEALTH, s.life + (powerup.health || 50));
+          } else if (powerup.type === 'SHIELD') {
+            s.shield = SHIELD_POWERUP_DURATION;
           } else {
             s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + powerup.level);
             s.score += 100;
@@ -348,7 +353,7 @@ function sketch(p) {
             if (!s.explode){
               if (s.shield<=0){
                 s.life-=Math.ceil(asteroid.r*0.5);
-                reduceShipPowerupLevel(s, 2);
+                reduceShipPowerupLevel(s, 1);
               }
               if (asteroid.r>gameParams.asteroidSize.min) {
                 Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
@@ -423,6 +428,9 @@ function sketch(p) {
     }
     if (random(1) < HEALTH_POWERUP_DROP_CHANCE) {
       powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y, 'HEALTH'));
+    }
+    if (random(1) < SHIELD_POWERUP_DROP_CHANCE) {
+      powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y, 'SHIELD'));
     }
   }
 
