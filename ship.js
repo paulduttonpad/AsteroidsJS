@@ -16,7 +16,7 @@ class Ship{
     this.explode=false;
     this.colour={R:255,G:255,B:255};
     this.shield=100;
-    this.powerupLevel=0;
+    this.powerupLevel=1;
   }
 
   collides(other){

@@ -28,9 +28,9 @@ const clientSnapshots = new Map();
 let worldVersion = 0;
 const fullSnapshotEveryFrames = 60 * 10;
 const shipBroadcastIntervalMs = 100; // max 10 movement broadcasts per second per ship
-const POWERUP_LEVEL_CAP = 50;
+const POWERUP_LEVEL_CAP = 60;
 const POWERUP_LEVELS_PER_LASER = 5;
-const LASER_SPREAD_DEGREES = 18;
+const LASER_SPREAD_DEGREES = 16;
 const pendingShipBroadcasts = new Map();
 const shipBroadcastTimers = new Map();
 const lastShipBroadcastAt = new Map();
@@ -129,6 +129,7 @@ function sketch(p) {
           if (!ships[shipIndex[id]].explode){
             if (ships[shipIndex[id]].shield<=0){
               ships[shipIndex[id]].life-=Math.ceil(asteroid.r*0.5);
+              reduceShipPowerupLevel(ships[shipIndex[id]], 2);
             }
             if (asteroid.r>gameParams.asteroidSize.min) {
               Asteroid.split(engine,gameParams,asteroids,asteroid,ships[shipIndex[id]].vel);
@@ -290,7 +291,8 @@ function sketch(p) {
       let collected = false;
       for (const s of ships){
         if (!s.explode && powerup.collides(s)){
-          s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, (s.powerupLevel || 0) + powerup.level);
+          s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + powerup.level);
+          s.score += 100;
           powerups.splice(i,1);
           collected = true;
           worldVersion++;
@@ -333,6 +335,7 @@ function sketch(p) {
             if (!s.explode){
               if (s.shield<=0){
                 s.life-=Math.ceil(asteroid.r*0.5);
+                reduceShipPowerupLevel(s, 2);
               }
               if (asteroid.r>gameParams.asteroidSize.min) {
                 Asteroid.split(engine,gameParams,asteroids,asteroid,s.vel);
@@ -401,13 +404,18 @@ function sketch(p) {
   }
 
   function maybeDropPowerup(asteroid){
-    if (!asteroid || random(1) >= 0.05) return;
+    if (!asteroid || random(1) >= 0.005) return;
     powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y));
+  }
+
+  function reduceShipPowerupLevel(ship, amount){
+    if (!ship) return;
+    ship.powerupLevel = Math.max(1, (ship.powerupLevel || 1) - amount);
   }
 
   function getPoweredLaserProfile(requestedRadius, ship){
     const baseRadius = typeof requestedRadius === 'number' && Number.isFinite(requestedRadius) ? requestedRadius : 10;
-    const powerupLevel = clampPowerupLevel(ship && Number.isFinite(ship.powerupLevel) ? ship.powerupLevel : 0);
+    const powerupLevel = clampPowerupLevel(ship && Number.isFinite(ship.powerupLevel) ? ship.powerupLevel : 1);
     const step = getPowerupCycleStep(powerupLevel);
     return {
       count:getPowerupLaserCount(powerupLevel),
@@ -417,19 +425,17 @@ function sketch(p) {
 
   function getPowerupLaserCount(powerupLevel){
     const cappedLevel = clampPowerupLevel(powerupLevel);
-    if (cappedLevel <= 0) return 1;
-    return Math.min(10, Math.ceil(cappedLevel / POWERUP_LEVELS_PER_LASER));
+    return Math.min(12, Math.ceil(cappedLevel / POWERUP_LEVELS_PER_LASER));
   }
 
   function getPowerupCycleStep(powerupLevel){
     const cappedLevel = clampPowerupLevel(powerupLevel);
-    if (cappedLevel <= 0) return 0;
     return ((cappedLevel - 1) % POWERUP_LEVELS_PER_LASER) + 1;
   }
 
   function getLaserHeadings(baseHeading, count){
     const heading = typeof baseHeading === 'number' && Number.isFinite(baseHeading) ? baseHeading : 0;
-    const laserCount = Math.max(1, Math.min(10, count || 1));
+    const laserCount = Math.max(1, Math.min(12, count || 1));
     const spreadRadians = LASER_SPREAD_DEGREES * Math.PI / 180;
     const centreOffset = (laserCount - 1) / 2;
     const headings = [];
@@ -440,8 +446,8 @@ function sketch(p) {
   }
 
   function clampPowerupLevel(powerupLevel){
-    if (typeof powerupLevel !== 'number' || !Number.isFinite(powerupLevel)) return 0;
-    return Math.max(0, Math.min(POWERUP_LEVEL_CAP, Math.floor(powerupLevel)));
+    if (typeof powerupLevel !== 'number' || !Number.isFinite(powerupLevel)) return 1;
+    return Math.max(1, Math.min(POWERUP_LEVEL_CAP, Math.floor(powerupLevel)));
   }
 
   function nextLevel(){
@@ -743,7 +749,7 @@ function sketch(p) {
       score:full.score,
       life:full.life,
       shield:full.shield,
-      powerupLevel:full.powerupLevel || 0,
+      powerupLevel:full.powerupLevel || 1,
       explode:!!full.explode,
       explodePct:r(full.explodePct || 0, 3),
       colour:full.colour

@@ -24,13 +24,17 @@ class Powerup{
   }
 
   static show(powerup){
+    const remainingLife = typeof powerup.life === 'number' ? powerup.life : 999999;
+    if (remainingLife <= 600 && floor(frameCount / 6) % 2 === 0) return;
+
     push();
     translate(powerup.pos.x,powerup.pos.y,2);
     rotate(frameCount*0.05);
     const c = powerup.colour || {R:255,G:220,B:60};
+    const flashAlpha = remainingLife <= 600 ? 220 : 120;
     stroke(c.R,c.G,c.B);
     strokeWeight(3);
-    fill(c.R,c.G,c.B,120);
+    fill(c.R,c.G,c.B,flashAlpha);
     beginShape();
     vertex(0,-powerup.r);
     vertex(powerup.r,0);

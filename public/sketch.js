@@ -112,7 +112,7 @@ function updateAll(data){
       ship.score=s.score;
       ship.life=s.life;
       ship.shield=s.shield;
-      ship.powerupLevel=s.powerupLevel || 0;
+      ship.powerupLevel=s.powerupLevel || 1;
       ship.explode=s.explode;
       data.ships.splice(i,1);
     }
@@ -674,7 +674,7 @@ function onScreenDisplay(){
   textFont(font);
   text('Level '+gameParams.level,-5,20);
   const ownColour = safeColour(ship.colour, ship.id);
-  const ownPowerupLevel = safeNumber(ship.powerupLevel);
+  const ownPowerupLevel = safeNumber(ship.powerupLevel, 1);
   const ownLife = safeNumber(ship.life);
   const ownScore = safeNumber(ship.score);
   fill(ownColour.R,ownColour.G,ownColour.B);
@@ -699,7 +699,7 @@ function onScreenDisplay(){
   for (let s of ships){
     if (s && s.id!=ship.id){
       const colour = safeColour(s.colour, s.id);
-      const powerupLevel = safeNumber(s.powerupLevel);
+      const powerupLevel = safeNumber(s.powerupLevel, 1);
       const life = safeNumber(s.life);
       const score = safeNumber(s.score);
       push();

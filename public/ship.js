@@ -18,7 +18,7 @@ class Ship {
   this.explode=false;
   this.explodePct=0;
   this.shield=0;
-  this.powerupLevel=0;
+  this.powerupLevel=1;
   
   this.lasers = [];
 }
@@ -183,8 +183,7 @@ class Ship {
   }
 
   getPowerupCycleStep(){
-    const cappedLevel = Math.max(0, Math.min(50, Math.floor(this.powerupLevel || 0)));
-    if (cappedLevel <= 0) return 0;
+    const cappedLevel = Math.max(1, Math.min(60, Math.floor(this.powerupLevel || 1)));
     return ((cappedLevel - 1) % 5) + 1;
   }
 
