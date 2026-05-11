@@ -28,6 +28,9 @@ const clientSnapshots = new Map();
 let worldVersion = 0;
 const fullSnapshotEveryFrames = 60 * 10;
 const shipBroadcastIntervalMs = 100; // max 10 movement broadcasts per second per ship
+const POWERUP_LEVEL_CAP = 50;
+const POWERUP_LEVELS_PER_LASER = 5;
+const LASER_SPREAD_DEGREES = 18;
 const pendingShipBroadcasts = new Map();
 const shipBroadcastTimers = new Map();
 const lastShipBroadcastAt = new Map();
@@ -156,15 +159,19 @@ function sketch(p) {
     socket.on('fire', fire);
     function fire(data){
       const firingShip = ships[shipIndex[data.id]];
-      const laserRadius = getPoweredLaserRadius(data.r, firingShip);
-      var laser = new Laser(data.pos.x,data.pos.y,laserRadius,data.heading,data.id,data.vel.x,data.vel.y);
-      var x=Math.cos(data.heading);
-      var y=Math.sin(data.heading);
+      if (!firingShip || firingShip.explode) return;
 
-      laser.pos=addVectors(laser.pos,{x:x*laserRadius,y:y*laserRadius});
-      laser.vel=addVectors(laser.vel,{x:x*20,y:y*20});
+      const laserProfile = getPoweredLaserProfile(data.r, firingShip);
+      for (const heading of getLaserHeadings(data.heading, laserProfile.count)) {
+        const laser = new Laser(data.pos.x,data.pos.y,laserProfile.radius,heading,data.id,data.vel.x,data.vel.y);
+        const x=Math.cos(heading);
+        const y=Math.sin(heading);
 
-      lasers.push(laser);
+        laser.pos=addVectors(laser.pos,{x:x*laserProfile.radius,y:y*laserProfile.radius});
+        laser.vel=addVectors(laser.vel,{x:x*20,y:y*20});
+
+        lasers.push(laser);
+      }
       worldVersion++;
       // Laser creation is sent in the next deltadata packet.
     }
@@ -283,7 +290,7 @@ function sketch(p) {
       let collected = false;
       for (const s of ships){
         if (!s.explode && powerup.collides(s)){
-          s.powerupLevel = (s.powerupLevel || 0) + powerup.level;
+          s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, (s.powerupLevel || 0) + powerup.level);
           powerups.splice(i,1);
           collected = true;
           worldVersion++;
@@ -398,10 +405,43 @@ function sketch(p) {
     powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y));
   }
 
-  function getPoweredLaserRadius(requestedRadius, ship){
+  function getPoweredLaserProfile(requestedRadius, ship){
     const baseRadius = typeof requestedRadius === 'number' && Number.isFinite(requestedRadius) ? requestedRadius : 10;
-    const powerupLevel = ship && Number.isFinite(ship.powerupLevel) ? ship.powerupLevel : 0;
-    return baseRadius + powerupLevel*4;
+    const powerupLevel = clampPowerupLevel(ship && Number.isFinite(ship.powerupLevel) ? ship.powerupLevel : 0);
+    const step = getPowerupCycleStep(powerupLevel);
+    return {
+      count:getPowerupLaserCount(powerupLevel),
+      radius:baseRadius + step*4
+    };
+  }
+
+  function getPowerupLaserCount(powerupLevel){
+    const cappedLevel = clampPowerupLevel(powerupLevel);
+    if (cappedLevel <= 0) return 1;
+    return Math.min(10, Math.ceil(cappedLevel / POWERUP_LEVELS_PER_LASER));
+  }
+
+  function getPowerupCycleStep(powerupLevel){
+    const cappedLevel = clampPowerupLevel(powerupLevel);
+    if (cappedLevel <= 0) return 0;
+    return ((cappedLevel - 1) % POWERUP_LEVELS_PER_LASER) + 1;
+  }
+
+  function getLaserHeadings(baseHeading, count){
+    const heading = typeof baseHeading === 'number' && Number.isFinite(baseHeading) ? baseHeading : 0;
+    const laserCount = Math.max(1, Math.min(10, count || 1));
+    const spreadRadians = LASER_SPREAD_DEGREES * Math.PI / 180;
+    const centreOffset = (laserCount - 1) / 2;
+    const headings = [];
+    for (let i=0;i<laserCount;i++) {
+      headings.push(heading + (i - centreOffset) * spreadRadians);
+    }
+    return headings;
+  }
+
+  function clampPowerupLevel(powerupLevel){
+    if (typeof powerupLevel !== 'number' || !Number.isFinite(powerupLevel)) return 0;
+    return Math.max(0, Math.min(POWERUP_LEVEL_CAP, Math.floor(powerupLevel)));
   }
 
   function nextLevel(){

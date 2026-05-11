@@ -182,17 +182,23 @@ class Ship {
     return (d<this.r+object.r+20);
   }
 
+  getPowerupCycleStep(){
+    const cappedLevel = Math.max(0, Math.min(50, Math.floor(this.powerupLevel || 0)));
+    if (cappedLevel <= 0) return 0;
+    return ((cappedLevel - 1) % 5) + 1;
+  }
+
   getLaserRadius(baseRadius=10){
-    return baseRadius + this.powerupLevel*4;
+    return baseRadius + this.getPowerupCycleStep()*4;
   }
 
   getLaserFireDelay(){
-    return Math.max(60, 200 - this.powerupLevel*20);
+    return Math.max(60, 200 - this.getPowerupCycleStep()*20);
   }
 
   fire(r){
     if (!this.explode){
-      var data={r:this.getLaserRadius(r),id:this.id,heading:this.heading,pos:{x:this.pos.x,y:this.pos.y},vel:{x:this.vel.x,y:this.vel.y}};
+      var data={r:r,id:this.id,heading:this.heading,pos:{x:this.pos.x,y:this.pos.y},vel:{x:this.vel.x,y:this.vel.y}};
       socket.emit('fire',data);
     }
   }
