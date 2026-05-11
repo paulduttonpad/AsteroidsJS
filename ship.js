@@ -16,6 +16,7 @@ class Ship{
     this.explode=false;
     this.colour={R:255,G:255,B:255};
     this.shield=100;
+    this.powerupLevel=0;
   }
 
   collides(other){
@@ -33,6 +34,7 @@ class Ship{
       score:this.score,
       life:this.life,
       shield:this.shield,
+      powerupLevel:this.powerupLevel,
       explode:this.explode,
       explodePct:this.explodePct,
       r:this.r,
@@ -46,6 +48,7 @@ class Ship{
       explode:this.explode,
       explodePct:this.explodePct,
       shield:this.shield,
+      powerupLevel:this.powerupLevel,
       id:this.id
     }
   }

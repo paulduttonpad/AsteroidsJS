@@ -18,6 +18,7 @@ class Ship {
   this.explode=false;
   this.explodePct=0;
   this.shield=0;
+  this.powerupLevel=0;
   
   this.lasers = [];
 }
@@ -34,6 +35,7 @@ class Ship {
       size:this.size,
       life:this.life,
       shield:this.shield,
+      powerupLevel:this.powerupLevel,
       explode:this.explode,
       explodePct:this.explodePct,
       colour:this.colour
@@ -180,9 +182,17 @@ class Ship {
     return (d<this.r+object.r+20);
   }
 
+  getLaserRadius(baseRadius=10){
+    return baseRadius + this.powerupLevel*4;
+  }
+
+  getLaserFireDelay(){
+    return Math.max(60, 200 - this.powerupLevel*20);
+  }
+
   fire(r){
     if (!this.explode){
-      var data={r:r,id:this.id,heading:this.heading,pos:{x:this.pos.x,y:this.pos.y},vel:{x:this.vel.x,y:this.vel.y}};
+      var data={r:this.getLaserRadius(r),id:this.id,heading:this.heading,pos:{x:this.pos.x,y:this.pos.y},vel:{x:this.vel.x,y:this.vel.y}};
       socket.emit('fire',data);
     }
   }

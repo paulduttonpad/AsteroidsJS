@@ -24,6 +24,7 @@ let qtreeLimit=4;
 let ship;
 let ships=[];
 let lasers=[];
+let powerups=[];
 let asteroidImages=[];
 let font;
 let start=false;
@@ -71,6 +72,7 @@ function resetGame(){
   ship          = null;
   ships         = [];
   lasers        = [];
+  powerups      = [];
   start         = false;
   let starCount = floor((width*height)/10000);
   starField=new StarField(starCount,4);
@@ -99,6 +101,10 @@ function updateAll(data){
     asteroids.push(new Asteroid(asteroid));
   }
   lasers=data.lasers;
+  powerups=[];
+  for (let powerup of data.powerups || []){
+    powerups.push(new Powerup(powerup));
+  }
   asteroidCount=asteroids.length;
   for (let i=data.ships.length-1;i>=0;i--) {
     let s=data.ships[i];
@@ -106,6 +112,7 @@ function updateAll(data){
       ship.score=s.score;
       ship.life=s.life;
       ship.shield=s.shield;
+      ship.powerupLevel=s.powerupLevel || 0;
       ship.explode=s.explode;
       data.ships.splice(i,1);
     }
@@ -131,6 +138,7 @@ function updateDelta(data){
 
   applyAsteroidDelta(data.asteroids);
   applyLaserDelta(data.lasers);
+  applyPowerupDelta(data.powerups);
   applyShipDelta(data.ships);
 }
 
@@ -179,6 +187,28 @@ function applyLaserDelta(delta){
   }
 }
 
+function applyPowerupDelta(delta){
+  if (!delta) return;
+
+  for (const id of delta.remove || []) {
+    removePowerupById(id);
+  }
+
+  for (const powerup of delta.add || []) {
+    removePowerupById(powerup.id);
+    powerups.push(new Powerup(powerup));
+  }
+
+  for (const powerup of delta.update || []) {
+    const local = findById(powerups, powerup.id);
+    if (!local) {
+      socket.compress(true).emit('needdata');
+      continue;
+    }
+    Powerup.applyNetworkUpdate(local, powerup);
+  }
+}
+
 function applyShipDelta(delta){
   if (!delta || !ship) return;
 
@@ -217,6 +247,7 @@ function updateOwnShipStatus(s){
   if (s.score !== undefined) ship.score = s.score;
   if (s.life !== undefined) ship.life = s.life;
   if (s.shield !== undefined) ship.shield = s.shield;
+  if (s.powerupLevel !== undefined) ship.powerupLevel = s.powerupLevel;
   if (s.explode !== undefined) ship.explode = s.explode;
   if (s.explodePct !== undefined) ship.explodePct = s.explodePct;
   if (isValidShipColour(s.colour)) ship.colour = safeColour(s.colour, ship.id);
@@ -234,6 +265,14 @@ function removeLaserByKey(key){
   for (let i=lasers.length-1;i>=0;i--) {
     if (lasers[i].key == key) {
       lasers.splice(i,1);
+    }
+  }
+}
+
+function removePowerupById(id){
+  for (let i=powerups.length-1;i>=0;i--) {
+    if (powerups[i].id == id) {
+      powerups.splice(i,1);
     }
   }
 }
@@ -259,12 +298,14 @@ function updateLife(data){
   for (let s2 of data.ships) {
     if (s2.id==ship.id){
       ship.life=s2.life;
+      if (s2.powerupLevel !== undefined) ship.powerupLevel=s2.powerupLevel;
       ship.explode=s2.explode;
         } else {
       for (let s of ships){
         if (s.id==s2.id){
           s.life=s2.life;
           s.shield=s2.shield;
+          if (s2.powerupLevel !== undefined) s.powerupLevel=s2.powerupLevel;
           s.explode=s2.explode;
         }
       }
@@ -447,6 +488,10 @@ function draw() {
       Laser.update(laser);
       qtree.insert(new Point(laser.pos.x,laser.pos.y,laser));
     }
+    for (var powerup of powerups){
+      Powerup.update(powerup);
+      qtree.insert(new Point(powerup.pos.x,powerup.pos.y,powerup));
+    }
     // qtree.show();
 
     //query the quadtree for objects that are on screen
@@ -473,6 +518,8 @@ function draw() {
           ship.applyForce(createVector(asteroid.vel.x,asteroid.vel.y).mult(0.5));
           socket.compress(true).emit('hitShip',data);
         }
+      } else if (onScreenPoint.userData.type=="POWERUP"){
+        Powerup.show(onScreenPoint.userData);
       } else if (onScreenPoint.userData.type=="LASER"){
         // show the laser if onscreen and check if it hits another players ship
         var laser=onScreenPoint.userData;
@@ -554,7 +601,7 @@ function draw() {
 
     // check for mobile/touch screen input and thust te ship in the direction of the touch and fire
     if (deviceType != 'desktop' && !ship.explode) {
-      if (millis()-lasertimer>200){
+      if (millis()-lasertimer>ship.getLaserFireDelay()){
         ship.fire(10);
         lasertimer=millis();
       } 
@@ -588,12 +635,12 @@ function draw() {
     onScreenDisplay();
 
     // if L or SPACE is pushed fire 5 times a second with size 10 lasers
-    if ((keyIsDown(76) || keyIsDown(32)) && millis()-lasertimer>200){
+    if ((keyIsDown(76) || keyIsDown(32)) && millis()-lasertimer>ship.getLaserFireDelay()){
       ship.fire(10);
       lasertimer=millis();
     }
     // if M is pushed fire 5 times a second with size 50 lasers
-    if (keyIsDown(77) && millis()-lasertimer>200){
+    if (keyIsDown(77) && millis()-lasertimer>ship.getLaserFireDelay()){
       ship.fire(50);
       lasertimer=millis();
     }
@@ -627,10 +674,11 @@ function onScreenDisplay(){
   textFont(font);
   text('Level '+gameParams.level,-5,20);
   const ownColour = safeColour(ship.colour, ship.id);
+  const ownPowerupLevel = safeNumber(ship.powerupLevel);
   const ownLife = safeNumber(ship.life);
   const ownScore = safeNumber(ship.score);
   fill(ownColour.R,ownColour.G,ownColour.B);
-  text(ownLife+":"+ownScore.toString(),-5,40);
+  text(ownPowerupLevel+":"+ownLife+":"+ownScore.toString(),-5,40);
   pop();
   if (ship.explode){
     ship.vel.x=0;
@@ -651,6 +699,7 @@ function onScreenDisplay(){
   for (let s of ships){
     if (s && s.id!=ship.id){
       const colour = safeColour(s.colour, s.id);
+      const powerupLevel = safeNumber(s.powerupLevel);
       const life = safeNumber(s.life);
       const score = safeNumber(s.score);
       push();
@@ -660,7 +709,7 @@ function onScreenDisplay(){
       fill(colour.R,colour.G,colour.B);
       textSize(20);
       textFont(font);
-      text(life+":"+score.toString(),-5,20);
+      text(powerupLevel+":"+life+":"+score.toString(),-5,20);
       pop();
       counter++;
     }
