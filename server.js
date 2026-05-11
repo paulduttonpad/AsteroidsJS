@@ -184,6 +184,13 @@ function sketch(p) {
       worldVersion++;
     });
 
+    socket.on('powerup', function() {
+      const s = ships[shipIndex[socket.id]];
+      if (!s || s.explode) return;
+      s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + 1);
+      worldVersion++;
+    });
+
     socket.on('disconnect', function() {
       console.log(new Date().toString());
       console.log('Got disconnect: '+socket.id);

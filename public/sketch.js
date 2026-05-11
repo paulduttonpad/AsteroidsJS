@@ -733,6 +733,10 @@ function keyPressed(){
   case 'n':
     socket.compress(true).emit('newasteroid');
     break;
+  case 'p':
+  case 'P':
+    socket.compress(true).emit('powerup');
+    break;
   case 'h':
     socket.compress(true).emit('hitall');
     let onScreen=qtree.query(new Rectangle(ship.pos.x,ship.pos.y,width/2+gameParams.asteroidSize.max,height/2+gameParams.asteroidSize.max));
