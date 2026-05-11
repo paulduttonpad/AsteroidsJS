@@ -1,15 +1,16 @@
 class Powerup{
-  constructor(x,y) {
-    this.type="POWERUP";
+  constructor(x,y,type='POWERUP') {
+    this.type=type;
     this.id='powerup-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
     this.pos = {x:x,y:y};
     this.vel = {x:random(-2,2),y:random(-2,2)};
     this.acc = {x:0,y:0};
-    this.r=14;
+    this.r=this.type==='HEALTH' ? 16 : 14;
     this.level=1;
-    this.life=60*30;
+    this.health=50;
+    this.life=60*15;
     this.attractionRadius=200;
-    this.colour={R:255,G:220,B:60};
+    this.colour=this.type==='HEALTH' ? {R:255,G:0,B:0} : {R:255,G:220,B:60};
   }
 
   update(ping, ships, gameParams) {
@@ -88,6 +89,7 @@ class Powerup{
       vel:{x:this.vel.x,y:this.vel.y},
       r:this.r,
       level:this.level,
+      health:this.health,
       life:this.life,
       colour:this.colour
     }

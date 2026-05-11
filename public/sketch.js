@@ -518,7 +518,7 @@ function draw() {
           ship.applyForce(createVector(asteroid.vel.x,asteroid.vel.y).mult(0.5));
           socket.compress(true).emit('hitShip',data);
         }
-      } else if (onScreenPoint.userData.type=="POWERUP"){
+      } else if (onScreenPoint.userData.type=="POWERUP" || onScreenPoint.userData.type=="HEALTH"){
         Powerup.show(onScreenPoint.userData);
       } else if (onScreenPoint.userData.type=="LASER"){
         // show the laser if onscreen and check if it hits another players ship

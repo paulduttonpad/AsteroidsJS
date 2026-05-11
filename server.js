@@ -28,9 +28,11 @@ const clientSnapshots = new Map();
 let worldVersion = 0;
 const fullSnapshotEveryFrames = 60 * 10;
 const shipBroadcastIntervalMs = 100; // max 10 movement broadcasts per second per ship
-const POWERUP_LEVEL_CAP = 60;
+const POWERUP_LEVEL_CAP = 50;
 const POWERUP_LEVELS_PER_LASER = 5;
-const LASER_SPREAD_DEGREES = 16;
+const LASER_SPREAD_DEGREES = 10;
+const POWERUP_DROP_CHANCE = 0.02;
+const HEALTH_POWERUP_DROP_CHANCE = 0.01;
 const pendingShipBroadcasts = new Map();
 const shipBroadcastTimers = new Map();
 const lastShipBroadcastAt = new Map();
@@ -298,8 +300,12 @@ function sketch(p) {
       let collected = false;
       for (const s of ships){
         if (!s.explode && powerup.collides(s)){
-          s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + powerup.level);
-          s.score += 100;
+          if (powerup.type === 'HEALTH') {
+            s.life += powerup.health || 50;
+          } else {
+            s.powerupLevel = Math.min(POWERUP_LEVEL_CAP, Math.max(1, s.powerupLevel || 1) + powerup.level);
+            s.score += 100;
+          }
           powerups.splice(i,1);
           collected = true;
           worldVersion++;
@@ -411,8 +417,13 @@ function sketch(p) {
   }
 
   function maybeDropPowerup(asteroid){
-    if (!asteroid || random(1) >= 0.005) return;
-    powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y));
+    if (!asteroid) return;
+    if (random(1) < POWERUP_DROP_CHANCE) {
+      powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y));
+    }
+    if (random(1) < HEALTH_POWERUP_DROP_CHANCE) {
+      powerups.push(new Powerup(asteroid.pos.x, asteroid.pos.y, 'HEALTH'));
+    }
   }
 
   function reduceShipPowerupLevel(ship, amount){
@@ -782,6 +793,7 @@ function sketch(p) {
       vel:{x:r(full.vel.x), y:r(full.vel.y)},
       r:r(full.r, 2),
       level:full.level || 1,
+      health:full.health || 50,
       life:r(full.life, 2),
       colour:full.colour
     };
@@ -810,7 +822,6 @@ function sketch(p) {
 
   function resetGame(){
     worldVersion++;
-    powerups=[];
     removeWalls();
     createWalls();
     for (var i=0;i<gameParams.asteroidCount;i++){
