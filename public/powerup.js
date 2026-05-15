@@ -10,11 +10,40 @@ class Powerup{
     this.shield=powerup.shield || 60*15;
     this.life=powerup.life || 1;
     this.colour=powerup.colour || (powerup.type === 'HEALTH' ? {R:255,G:0,B:0} : powerup.type === 'SHIELD' ? {R:40,G:140,B:255} : {R:255,G:220,B:60});
+    this.net = {
+      startTime: Powerup.now(),
+      lastUpdateAt: Powerup.now(),
+      duration: 100,
+      fromPos: {x:this.pos.x, y:this.pos.y},
+      toPos: {x:this.pos.x, y:this.pos.y},
+      vel: {x:this.vel.x, y:this.vel.y}
+    };
   }
 
   static applyNetworkUpdate(powerup, data){
-    if (data.pos) powerup.pos={x:data.pos.x,y:data.pos.y};
-    if (data.vel) powerup.vel={x:data.vel.x,y:data.vel.y};
+    if (data.pos || data.vel) {
+      const now = Powerup.now();
+      const previousUpdateAt = powerup.net && powerup.net.lastUpdateAt ? powerup.net.lastUpdateAt : now;
+      const duration = Powerup.clamp(now - previousUpdateAt, 80, 250);
+      const currentPos = {x:powerup.pos.x, y:powerup.pos.y};
+
+      powerup.net = {
+        startTime: now,
+        lastUpdateAt: now,
+        duration: duration,
+        fromPos: currentPos,
+        toPos: {
+          x: Powerup.safeNumber(data.pos && data.pos.x, currentPos.x),
+          y: Powerup.safeNumber(data.pos && data.pos.y, currentPos.y)
+        },
+        vel: {
+          x: Powerup.safeNumber(data.vel && data.vel.x, powerup.vel ? powerup.vel.x : 0),
+          y: Powerup.safeNumber(data.vel && data.vel.y, powerup.vel ? powerup.vel.y : 0)
+        }
+      };
+
+      powerup.vel = {x:powerup.net.vel.x,y:powerup.net.vel.y};
+    }
     if (data.r !== undefined) powerup.r=data.r;
     if (data.type !== undefined) powerup.type=data.type;
     if (data.level !== undefined) powerup.level=data.level;
@@ -25,7 +54,47 @@ class Powerup{
   }
 
   static update(powerup){
-    powerup.pos=addVectorsPing(powerup.pos,powerup.vel);
+    Powerup.updateNetworkSmoothing(powerup);
+  }
+
+  static updateNetworkSmoothing(powerup){
+    if (!powerup || !powerup.net) return;
+
+    const now = Powerup.now();
+    const elapsed = Math.max(0, now - powerup.net.startTime);
+    const frameDelta = elapsed / (1000 / 60);
+    const targetPos = {
+      x: powerup.net.toPos.x + powerup.net.vel.x * frameDelta,
+      y: powerup.net.toPos.y + powerup.net.vel.y * frameDelta
+    };
+    const t = Powerup.smoothStep(Powerup.clamp(elapsed / powerup.net.duration, 0, 1));
+
+    powerup.pos = {
+      x: Powerup.lerp(powerup.net.fromPos.x, targetPos.x, t),
+      y: Powerup.lerp(powerup.net.fromPos.y, targetPos.y, t)
+    };
+    powerup.vel = {x:powerup.net.vel.x,y:powerup.net.vel.y};
+  }
+
+  static now(){
+    if (typeof millis === 'function') return millis();
+    return Date.now();
+  }
+
+  static clamp(value, min, max){
+    return Math.max(min, Math.min(max, value));
+  }
+
+  static lerp(a, b, t){
+    return a + (b - a) * t;
+  }
+
+  static smoothStep(t){
+    return t * t * (3 - 2 * t);
+  }
+
+  static safeNumber(value, fallback){
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   }
 
   static show(powerup){
